@@ -1,0 +1,1 @@
+saned: -a option argument is now required. Previously, it was optional. Optional arguments are a GNU extension and non-GNU platforms already patch out this feature. Better to have a consistent implementation and we should encourage saned implementations to downgrade user privilege anyway.

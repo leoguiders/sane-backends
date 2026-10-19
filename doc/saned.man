@@ -39,13 +39,11 @@ to access image acquisition devices available on the local host.
 recognises the following options:
 
 .TP
-.BR \-a "\fI [username]\fR, " \-\-alone [=\fIusername]\fR
+.BR \-a "\fI username\fR, " \-\-alone =\fIusername\fR
 is equivalent to the combination of
 .B \-l \-D \-u
 .I username
-options. However,
-.I username
-is optional and running user will only be set when specified.
+options.
 
 .TP
 .BR \-u "\fI username\fR, " \-\-user =\fIusername\fR

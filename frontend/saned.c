@@ -3125,7 +3125,7 @@ do_bindings (void)
 
 
 static void
-runas_user (char *user)
+runas_user (const char *user)
 {
   uid_t runas_uid = 0;
   gid_t runas_gid = 0;
@@ -3233,7 +3233,7 @@ runas_user (char *user)
 
 
 static void
-run_standalone (char *user)
+run_standalone (const char *user)
 {
   struct pollfd *poll_set = NULL;
   int poll_set_valid = SANE_FALSE;
@@ -3501,7 +3501,7 @@ static void usage(char *me, int err)
   fprintf (stderr,
        "Usage: %s [OPTIONS]\n\n"
        " Options:\n\n"
-       "  -a, --alone[=user]	        equal to `-l -D -u user'\n"
+       "  -a, --alone=user	        equal to `-l -D -u user'\n"
        "  -l, --listen		        run in standalone mode (listen for connection)\n"
        "  -u, --user=user	        run as `user'\n"
        "  -n, --allow-network	        allow saned to use network scanners\n"
@@ -3523,7 +3523,7 @@ static struct option long_options[] =
 {
 /* These options set a flag. */
   {"help",              no_argument,            0, 'h'},
-  {"alone",             optional_argument,      0, 'a'},
+  {"alone",             required_argument,      0, 'a'},
   {"listen",            no_argument,            0, 'l'},
   {"user",              required_argument,      0, 'u'},
   {"allow-network",     no_argument,            0, 'n'},
@@ -3560,14 +3560,13 @@ main (int argc, char *argv[])
   run_once = SANE_FALSE;
   allow_network = SANE_FALSE;
 
-  while((c = getopt_long(argc, argv,"ha::lu:nDod:eb:p:B:", long_options, &long_index )) != -1)
+  while((c = getopt_long(argc, argv,"ha:lu:nDod:eb:p:B:", long_options, &long_index )) != -1)
     {
       switch(c) {
       case 'a':
 	run_mode = SANED_RUN_ALONE;
 	run_foreground = SANE_FALSE;
-	if (optarg)
-	  user = optarg;
+        user = optarg;
 	break;
       case 'l':
 	run_mode = SANED_RUN_ALONE;

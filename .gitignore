@@ -57,6 +57,7 @@ test-suite.log
 /testsuite/sanei/test_wire.log
 /testsuite/sanei/test_wire.out
 /testsuite/sanei/test_wire.trs
+/testsuite/tools/*.flt
 /testsuite/tools/*.res
 
 # `make dist` artifacts

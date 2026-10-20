@@ -836,7 +836,7 @@ init_options( Plustek_Scanner *s )
 	s->opt[OPT_BR_X].unit  = SANE_UNIT_MM;
 	s->opt[OPT_BR_X].constraint_type  = SANE_CONSTRAINT_RANGE;
 	s->opt[OPT_BR_X].constraint.range = &s->hw->x_range;
-	s->val[OPT_BR_X].w = SANE_FIX(_DEFAULT_BRX);
+	s->val[OPT_BR_X].w = SANE_FIX(s->hw->max_x);
 
 	/* bottom-right y */
 	s->opt[OPT_BR_Y].name  = SANE_NAME_SCAN_BR_Y;
@@ -846,7 +846,7 @@ init_options( Plustek_Scanner *s )
 	s->opt[OPT_BR_Y].unit  = SANE_UNIT_MM;
 	s->opt[OPT_BR_Y].constraint_type  = SANE_CONSTRAINT_RANGE;
 	s->opt[OPT_BR_Y].constraint.range = &s->hw->y_range;
-	s->val[OPT_BR_Y].w = SANE_FIX(_DEFAULT_BRY);
+	s->val[OPT_BR_Y].w = SANE_FIX(s->hw->max_y);
 
 	/* "Enhancement" group: */
 	s->opt[OPT_ENHANCEMENT_GROUP].title = SANE_I18N("Enhancement");
@@ -2215,8 +2215,8 @@ sane_control_option( SANE_Handle handle, SANE_Int option,
 						dev->y_range.max = SANE_FIX(dev->max_y);
 						s->val[OPT_TL_X].w = SANE_FIX(_DEFAULT_TLX);
 						s->val[OPT_TL_Y].w = SANE_FIX(_DEFAULT_TLY);
-						s->val[OPT_BR_X].w = SANE_FIX(_DEFAULT_BRX);
-						s->val[OPT_BR_Y].w = SANE_FIX(_DEFAULT_BRY);
+						s->val[OPT_BR_X].w = SANE_FIX(dev->max_x);
+						s->val[OPT_BR_Y].w = SANE_FIX(dev->max_y);
 
 						s->opt[OPT_MODE].constraint.string_list = mode_list;
 						s->val[OPT_MODE].w = 2; /* HEINER COLOR_TRUE24;*/

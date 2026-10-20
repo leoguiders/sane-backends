@@ -1422,7 +1422,7 @@ sane_get_option_descriptor (SANE_Handle handle, SANE_Int option)
     opt->constraint_type = SANE_CONSTRAINT_NONE;
 
     /*flaming hack to get scanimage to hide group*/
-    if (!s->has_adf)
+    if (!s->has_adf && s->model != MODEL_FI70F)
       opt->type = SANE_TYPE_BOOL;
   }
 
@@ -1432,7 +1432,7 @@ sane_get_option_descriptor (SANE_Handle handle, SANE_Int option)
     opt->desc = SANE_DESC_SCAN;
     opt->type = SANE_TYPE_BOOL;
     opt->unit = SANE_UNIT_NONE;
-    if (s->has_adf)
+    if (s->has_adf || s->model == MODEL_FI70F)
       opt->cap = SANE_CAP_SOFT_DETECT | SANE_CAP_HARD_SELECT | SANE_CAP_ADVANCED;
     else
       opt->cap = SANE_CAP_INACTIVE;

@@ -269,6 +269,7 @@ struct scanner
 #define MODEL_S1100 (1<<3)
 #define MODEL_S1300i (1<<4)
 #define MODEL_FI65F (1<<5)
+#define MODEL_FI70F (1<<6)
 
 #define USB_COMMAND_TIME   10000
 #define USB_DATA_TIME      10000
@@ -378,6 +379,9 @@ static SANE_Status coarsecal(struct scanner *s);
 static SANE_Status finecal(struct scanner *s);
 static SANE_Status send_lut(struct scanner *s);
 static SANE_Status lamp(struct scanner *s, unsigned char set);
+static SANE_Status fi70f_d8(struct scanner *s, unsigned char set);
+static SANE_Status fi70f_coarsecal(struct scanner *s);
+static SANE_Status fi70f_finecal(struct scanner *s);
 static SANE_Status set_window(struct scanner *s, int window);
 static SANE_Status scan(struct scanner *s);
 

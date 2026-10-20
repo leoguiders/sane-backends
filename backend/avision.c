@@ -179,6 +179,16 @@ static Avision_HWEntry Avision_Device_List [] =
     /* comment="duplex! sheetfed + flatbed scanner" */
     /* status="basic" */
 
+    /* Avision AD335WN - duplex sheetfed scanner */
+    { NULL, NULL,
+      0x0638, 0x2F28,
+      "Avision", "AD335WN",
+      0,
+      { 0, {0, 0}, {{0, 0}, {0, 0}} }
+    },
+    /* comment="sheetfed; limitation: reboot scanner after each sheet" */
+    /* status="experimental" */
+
     { "AVISION", "AV100CS",
       0, 0,
       "Avision", "AV100CS",

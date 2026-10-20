@@ -80,4 +80,4 @@
 :interface "USB"
 :status :basic
 :usbid "0x05ca" "0x0308"
-:comment "300 dpi only. Needs firmware '70f_0A02.nal' (Comet3FirmFile in the PaperStream IP installer) and the AC adapter: on bus power from one USB port the carriage stalls."
+:comment "Needs firmware '70f_0A02.nal' (Comet3FirmFile in the PaperStream IP installer) and the AC adapter: on bus power from one USB port the carriage stalls."

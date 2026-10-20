@@ -185,6 +185,13 @@ struct scanner
   size_t setWindowCoarseCalLen;
 
   unsigned char * setWindowFineCal;   /* sent before fine cal */
+  /* fi-70F raw line geometry for the current mode, in byte triplets;
+   * plane start and spacing are refined from the white calibration read */
+  int fi70f_seg_w;          /* pixels per CIS segment */
+  int fi70f_plane_off;      /* first triplet of the red plane */
+  int fi70f_plane_stride;   /* triplets from one colour plane to the next */
+  int fi70f_x_off;          /* first usable pixel */
+  int fi70f_width;          /* usable pixels */
   size_t setWindowFineCalLen;
 
   unsigned char * setWindowSendCal;   /* sent before send cal */

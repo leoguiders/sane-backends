@@ -924,6 +924,7 @@ void genesys_init_usb_device_tables()
                   ModelFlag::HOST_SIDE_CALIBRATION_COMPLETE_SCAN |
                   ModelFlag::DARK_CALIBRATION |
                   ModelFlag::SHADING_REPARK |
+                  ModelFlag::HOST_SIDE_GRAY |
                   ModelFlag::UTA_NO_SECONDARY_MOTOR |
                   ModelFlag::CUSTOM_GAMMA;
     model.buttons = GENESYS_HAS_SCAN_SW |

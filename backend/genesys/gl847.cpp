@@ -626,6 +626,10 @@ void CommandSetGl847::init_regs_for_scan_session(Genesys_Device* dev, const Gene
 
     dev->total_bytes_read = 0;
     dev->total_bytes_to_read = (size_t)session.output_line_bytes_requested * (size_t)session.params.lines;
+    if (session.use_host_side_gray) {
+        // the chip delivers 3 channels that are merged to gray on the host
+        dev->total_bytes_to_read /= 3;
+    }
 
     DBG(DBG_info, "%s: total bytes to send = %zu\n", __func__, dev->total_bytes_to_read);
 }
@@ -699,7 +703,23 @@ ScanSession CommandSetGl847::calculate_scan_session(const Genesys_Device* dev,
     session.params.brightness_adjustment = settings.brightness;
     session.params.flags = flags;
 
+    // CanoScan 5600F: 1-channel scans do not work in hardware, and the host side shading
+    // calibration data holds 3 channels. Do gray scans as 3-channel color scans and merge to gray
+    // on the host. compute_session() enables this for ModelFlag::HOST_SIDE_GRAY only when the
+    // filter is NONE, so ask for NONE there and then restore the user's filter, which selects
+    // the channel used by the image pipeline (NONE = luminance).
+    ColorFilter requested_filter = session.params.color_filter;
+    if (dev->model->model_id == ModelId::CANON_5600F && session.params.channels == 1 &&
+        session.params.scan_mode == ScanColorMode::GRAY)
+    {
+        session.params.color_filter = ColorFilter::NONE;
+    }
+
     compute_session(dev, session, sensor);
+
+    if (session.use_host_side_gray) {
+        session.params.color_filter = requested_filter;
+    }
 
     return session;
 }

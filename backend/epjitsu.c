@@ -4008,16 +4008,19 @@ send_lut (struct scanner *s)
       s->contrast, slope, offset);
 
     for(i=0;i<width;i++){
-      j=slope*i + offset + b;
+      double in = i;
+
+      /* the fi-70F delivers data linear in light; encode with gamma 2.2
+       * like PaperStream does, before brightness and contrast so those act
+       * on the visible image */
+      if (s->model == MODEL_FI70F){
+        in = (width-1) * pow(in / (width-1), 1/2.2);
+      }
+
+      j=slope*in + offset + b;
 
       j = MAX(j, 0);
       j = MIN(j, height-1);
-
-      /* the fi-70F delivers data linear in light; encode with gamma 2.2
-       * like PaperStream does, or images come out far too dark */
-      if (s->model == MODEL_FI70F){
-        j = (height-1) * pow((double)j / (height-1), 1/2.2) + 0.5;
-      }
 
         if (s->model == MODEL_S1100){
             /*only one table, be order*/

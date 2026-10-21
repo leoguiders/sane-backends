@@ -192,6 +192,11 @@ struct scanner
   int fi70f_plane_stride;   /* triplets from one colour plane to the next */
   int fi70f_x_off;          /* first usable pixel */
   int fi70f_width;          /* usable pixels */
+  /* per raw sample: the part of the dark level that the fine table, with its
+   * 256 count steps, leaves in the image, in tone table input units */
+  float fi70f_dark_res[2848*3];
+  float fi70f_lut[256];     /* tone table as sent */
+  float fi70f_lut_inv[256]; /* and its inverse */
   size_t setWindowFineCalLen;
 
   unsigned char * setWindowSendCal;   /* sent before send cal */

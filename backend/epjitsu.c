@@ -3646,13 +3646,17 @@ fi70f_finecal(struct scanner *s)
 
     for(i = 0; i < samples; i++){
         int plane = (i/3 - s->fi70f_plane_off) / s->fi70f_plane_stride;
-        int v;
+        int hi, lo;
 
         plane = MAX(0, MIN(2, plane));
-        v = round2((d[i] - 4520) / 256);
-        s->sendcal.buffer[i*2] = MAX(0, MIN(255, v));
-        v = round2((w[i] - d[i]) / white_scale[plane] - 151);
-        s->sendcal.buffer[i*2+1] = MAX(0, MIN(255, v));
+        hi = MAX(0, MIN(255, round2((d[i] - 4520) / 256)));
+        lo = MAX(0, MIN(255, round2((w[i] - d[i]) / white_scale[plane] - 151)));
+        s->sendcal.buffer[i*2] = hi;
+        s->sendcal.buffer[i*2+1] = lo;
+
+        /* the table maps white - dark to 255 * white_scale */
+        s->fi70f_dark_res[i] = (d[i] - 4520 - 256*hi) * 255
+          / (white_scale[plane] * (lo + 151));
     }
 
     ret = finecal_send_cal(s);
@@ -4127,6 +4131,9 @@ send_lut (struct scanner *s)
             out[i*2+1] = j & 0xff;
         }
         else if (s->model == MODEL_FI65F || s->model == MODEL_FI70F){
+            if (s->model == MODEL_FI70F)
+                s->fi70f_lut[i] = j;
+
             /*first table, be order*/
             out[i*2] = (j >> 8) & 0xff;
             out[i*2+1] = j & 0xff;
@@ -4151,6 +4158,18 @@ send_lut (struct scanner *s)
             /*third table, le order*/
             out[width*4 + i*2] = j & 0xff;
             out[width*4 + i*2+1] = (j >> 8) & 0x0f;
+        }
+    }
+
+    /* inverse of the fi-70F table, for fi70f_fix: the first input that
+     * reaches each output, interpolated */
+    if (s->model == MODEL_FI70F){
+        int v;
+        for(v = 0; v < 256; v++){
+            float *l = s->fi70f_lut, in;
+            for(i = 0; i < 254 && l[i+1] < v; i++);
+            in = (l[i+1] > l[i]) ? i + (v - l[i]) / (l[i+1] - l[i]) : i;
+            s->fi70f_lut_inv[v] = MAX(0, MIN(255, in));
         }
     }
 
@@ -4598,6 +4617,22 @@ six5 (struct scanner *s)
 /* the output image might be lower dpi than input image, so we scale horizontally */
 /* if the input image is mirrored left to right, we do not correct it here */
 /* if the input image has padding (at the end or between heads), it is removed here */
+/* fi-70F: take out the dark level the fine table left in one 8-bit sample,
+ * going back through the tone table to the scanner's linear values */
+static int
+fi70f_fix(struct scanner *s, unsigned char v, float res)
+{
+    float in = s->fi70f_lut_inv[v] - res;
+    int i;
+
+    if(in <= 0)
+        return s->fi70f_lut[0];
+    if(in >= 255)
+        return s->fi70f_lut[255];
+    i = in;
+    return s->fi70f_lut[i] + (in - i) * (s->fi70f_lut[i+1] - s->fi70f_lut[i]) + 0.5;
+}
+
 static SANE_Status
 descramble_raw(struct scanner *s, struct transfer * tp)
 {
@@ -4734,9 +4769,9 @@ descramble_raw(struct scanner *s, struct transfer * tp)
           if(k == width || this_col >= tp->image->width_pix) break;
 
           i = (s->fi70f_plane_off + t)*3 + seg;
-          r += l0[i];
-          g += l0[i + stride];
-          b += l0[i + 2*stride];
+          r += fi70f_fix(s, l0[i], s->fi70f_dark_res[i]);
+          g += fi70f_fix(s, l0[i + stride], s->fi70f_dark_res[i + stride]);
+          b += fi70f_fix(s, l0[i + 2*stride], s->fi70f_dark_res[i + 2*stride]);
           ppc++;
         }
       }

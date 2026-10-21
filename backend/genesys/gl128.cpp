@@ -326,6 +326,22 @@ std::array<double, 3> gl128_channel_means_u16(const std::vector<std::uint8_t>& s
 }
 
 
+// Fraction of the 16-bit range the open-gate white level is brought to. The
+// image pass adds image_offset_delta to the gain codes, and the shading table
+// then scales white to full scale, so some headroom is left below the ADC
+// ceiling.
+constexpr float GL128_WHITE_TARGET = 0.87f * 65535.0f;
+
+// Gain code (registers 0x02-0x04) for a channel whose level was read at code 0,
+// or `fallback` if the strip is unusable (lamp not lit).
+int gl128_gain_code_for_level(float level, int fallback)
+{
+    if (level < 1000.0f) {
+        return fallback;
+    }
+    return compute_frontend_gain(level, GL128_WHITE_TARGET, FrontendType::ANALOG_DEVICES);
+}
+
 // Lamp control: single writes of 0x03. 0x37 (infrared LED) is written only at
 // boot, as SilverFast does for colour scans; infrared is not supported yet.
 void gl128_lamp_on(Genesys_Device* dev)
@@ -1092,7 +1108,9 @@ void gl128_run_asic_shading(Genesys_Device* dev, const Genesys_Sensor& sensor,
         dev->cmd_set->set_fe(dev, sensor, AFE_SET);
     };
     const auto& t = gl128_device_tables(dev);
-    const std::array<int, 3>& level_offs = t.shading_offsets;
+    // Gain codes of the strips and the image pass; the lit-strip measurement
+    // below replaces SilverFast's fixed codes.
+    std::array<int, 3> level_offs = t.shading_offsets;
 
     // Cold start: the lamp needs to warm up, or the white strip (62 ms after
     // switching on, as SilverFast) reads 0. Read stationary lamp-on strips
@@ -1156,6 +1174,30 @@ void gl128_run_asic_shading(Genesys_Device* dev, const Genesys_Sensor& sensor,
             "means=(%.0f,%.0f,%.0f)\n",
             p.offsets[0], p.offsets[1], p.offsets[2], p.gains[0], p.gains[1], p.gains[2],
             m[0], m[1], m[2]);
+    }
+
+    // SilverFast's gain codes saturate the white strip on units whose lamp and
+    // CCD are brighter than the capture's (every column at the ADC ceiling,
+    // so the shading table has nothing to flatten). Read the lit gate through
+    // the shading window at gain code 0 (a stationary strip: the white strip
+    // moves the carriage off home, so it has to come last) and pick a code
+    // per channel that puts white at GL128_WHITE_TARGET of full scale.
+    {
+        apply_fe({ 0, 0, 0 }, t.lamp_gains);
+        auto raw = gl128_acquire_shading_strip(dev, w, false);
+        auto lit = gl128_average_columns_chunky(raw, w.pixels, GL128_SHADING_LINES);
+        float level[3];
+        for (int c = 0; c < 3; c++) {
+            std::vector<unsigned> col(w.pixels);
+            for (unsigned x = 0; x < w.pixels; x++) {
+                col[x] = lit[x][c];
+            }
+            std::sort(col.begin(), col.end());
+            level[c] = col[std::min<std::size_t>(col.size() - 1, col.size() * 99 / 100)];
+            level_offs[c] = gl128_gain_code_for_level(level[c], t.shading_offsets[c]);
+        }
+        DBG(DBG_info, "GL128 lit gate at gain 0: (%.0f,%.0f,%.0f) -> gain codes (%d,%d,%d)\n",
+            level[0], level[1], level[2], level_offs[0], level_offs[1], level_offs[2]);
     }
     apply_fe(level_offs, t.after_probe_gains);
 

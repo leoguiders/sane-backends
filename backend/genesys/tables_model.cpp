@@ -2772,10 +2772,10 @@ void genesys_init_usb_device_tables()
     model.asic_type = AsicType::GL128;
 
     // SilverFast's resolutions; 150 and 300 dpi scan at 600 and are averaged
-    // on the host. Infrared is not supported yet.
+    // on the host.
     model.resolutions = {
         {
-            { ScanMethod::TRANSPARENCY },
+            { ScanMethod::TRANSPARENCY, ScanMethod::TRANSPARENCY_INFRARED },
             { 7200, 3600, 2400, 1800, 1440, 1200, 900, 720, 600, 300, 150 },
             { 7200, 3600, 2400, 1800, 1440, 1200, 900, 720, 600, 300, 150 },
         }

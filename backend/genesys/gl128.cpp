@@ -342,23 +342,48 @@ int gl128_gain_code_for_level(float level, int fallback)
     return compute_frontend_gain(level, GL128_WHITE_TARGET, FrontendType::ANALOG_DEVICES);
 }
 
-// Lamp control: single writes of 0x03. 0x37 (infrared LED) is written only at
-// boot, as SilverFast does for colour scans; infrared is not supported yet.
+// Illumination. A visible scan lights the lamp (0x03); an infrared scan keeps
+// the lamp off and lights the IR LED instead (0x37 bit 2, as the vendor driver
+// does for its infrared pass). Single writes: 0x37 is never read-modify-written.
+constexpr std::uint8_t GL128_REG_IR_IDLE = 0xc0;
+
+bool gl128_is_infrared(const Genesys_Device* dev)
+{
+    return dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
+}
+
+// Sets the IR LED, kept in dev->reg too so that the register set of the image
+// pass writes the same value. Writes only when the value changes: a visible
+// scan never touches 0x37 unless an infrared scan left the LED lit.
+void gl128_set_ir_led(Genesys_Device* dev, bool on)
+{
+    const std::uint8_t val = GL128_REG_IR_IDLE | (on ? IR_LED : 0);
+    if (!dev->reg.has_reg(REG_IR) || dev->reg.get8(REG_IR) != val) {
+        dev->interface->write_register(REG_IR, val);
+        dev->reg.init_reg(REG_IR, val);
+    }
+}
+
 void gl128_lamp_on(Genesys_Device* dev)
 {
     // Also kept in dev->reg: sanei_genesys_set_lamp_power() modifies 0x03
     // there and needs the register to exist.
-    std::uint8_t val = static_cast<std::uint8_t>(REG_0x03_XPASEL | REG_0x03_LAMPPWR);
+    const bool infrared = gl128_is_infrared(dev);
+    std::uint8_t val = static_cast<std::uint8_t>(
+            infrared ? REG_0x03_XPASEL : (REG_0x03_XPASEL | REG_0x03_LAMPPWR));
     dev->interface->write_register(REG_0x03, val);
     dev->reg.init_reg(REG_0x03, val);
+    gl128_set_ir_led(dev, infrared);
 }
 
 void gl128_lamp_off(Genesys_Device* dev)
 {
-    // Only 0x03, as SilverFast does before its dark strip (0x03=0x20). Also
-    // writing 0x37 kept the lamp lit through the dark strip.
+    // Only 0x03, as SilverFast does before its dark strip (0x03=0x20); the IR
+    // LED (0x37) is switched off only if it is on. Writing 0x37 on every
+    // visible scan kept the lamp lit through the dark strip.
     dev->interface->write_register(REG_0x03, REG_0x03_XPASEL);
     dev->reg.init_reg(REG_0x03, REG_0x03_XPASEL);
+    gl128_set_ir_led(dev, false);
 }
 
 // Lamp control pulses on 0x03, one write every 1.5 ms as in SilverFast's
@@ -1116,7 +1141,8 @@ void gl128_run_asic_shading(Genesys_Device* dev, const Genesys_Sensor& sensor,
     // switching on, as SilverFast) reads 0. Read stationary lamp-on strips
     // once a second until the brightest channel changes < 1% over three
     // readings (at least 5 s, at most 60 s).
-    if (dev->lamp_warmup_pending) {
+    // The white lamp's warm-up does not apply to the IR LED.
+    if (dev->lamp_warmup_pending && !gl128_is_infrared(dev)) {
         gl128_lamp_on(dev);
         apply_fe(level_offs, t.lamp_gains);
         double prev = 0.0;
@@ -2144,7 +2170,10 @@ ScanSession CommandSetGl128::calculate_scan_session(const Genesys_Device* dev,
         session.params.channels = 3;
         session.params.scan_mode = ScanColorMode::COLOR_SINGLE_PASS;
     }
-    session.params.color_filter = settings.color_filter;
+    // Infrared: all three channels see the same signal; use their luminance
+    // rather than the single colour filter of a visible gray scan.
+    session.params.color_filter = settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED ?
+            ColorFilter::NONE : settings.color_filter;
     session.params.contrast_adjustment = dev->settings.contrast;
     session.params.brightness_adjustment = dev->settings.brightness;
     session.params.flags = ScanFlag::NONE;

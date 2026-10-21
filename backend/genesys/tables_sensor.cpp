@@ -3731,19 +3731,23 @@ void genesys_init_sensor_tables()
             { { 7200 }, ScanMethod::TRANSPARENCY, 1200, 120, 0x17, 15963, 0x01 },
         };
 
+        // The infrared scan uses the visible scan's timing; only the
+        // illumination differs.
         const auto common_regs = sensor.custom_regs;
         for (const CustomSensorSettings& setting : custom_settings) {
-            sensor.resolutions = setting.resolutions;
-            sensor.method = setting.method;
-            sensor.shading_resolution = setting.resolutions.values()[0];
-            sensor.register_dpiset = setting.register_dpiset;
-            sensor.output_pixel_offset = setting.output_pixel_offset;
-            sensor.dummy_pixel = setting.dummy_pixel;
-            sensor.exposure_lperiod = setting.exposure_lperiod;
-            sensor.custom_regs = common_regs;
-            sensor.custom_regs.set_value(0xa5, setting.pixel_clock);
-            sensor.custom_regs.set_value(0xab, setting.pixel_clock);
-            s_sensors->push_back(sensor);
+            for (ScanMethod method : { setting.method, ScanMethod::TRANSPARENCY_INFRARED }) {
+                sensor.resolutions = setting.resolutions;
+                sensor.method = method;
+                sensor.shading_resolution = setting.resolutions.values()[0];
+                sensor.register_dpiset = setting.register_dpiset;
+                sensor.output_pixel_offset = setting.output_pixel_offset;
+                sensor.dummy_pixel = setting.dummy_pixel;
+                sensor.exposure_lperiod = setting.exposure_lperiod;
+                sensor.custom_regs = common_regs;
+                sensor.custom_regs.set_value(0xa5, setting.pixel_clock);
+                sensor.custom_regs.set_value(0xab, setting.pixel_clock);
+                s_sensors->push_back(sensor);
+            }
         }
     }
 

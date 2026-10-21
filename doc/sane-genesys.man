@@ -67,6 +67,56 @@ one scanner is detected. In the case of several identical model, the file name w
 of the logical USB device name. The expiration time manages the time a calibration is valid in cache.
 A value of -1 means forever, 0 means no cache.
 
+.SH "INFRARED"
+Scanners with an infrared scan method (the CanoScan 8400F and 8600F and the
+OpticFilm 7200i, 7500i, 8200i and 8200i SE) can read the infrared transmission of
+film, in which the dyes of chromogenic colour negatives and E-6 slides are
+transparent and dust and scratches are not. Two interfaces are offered.
+.TP
+.B \-\-infra\-red[=(yes|no)]
+Deliver the infrared plane of a transparency scan as a second frame. With the
+option set, one image consists of two frames: the scan (an RGB or gray frame, with
+.I last_frame
+false), then, from a further
+.BR sane_start (),
+a gray frame of the same area with
+.I last_frame
+true. A frontend must start the second frame without calling
+.BR sane_cancel ()
+in between, and must accept that
+.BR scanimage (1)
+cannot save it: it writes both frames to the same output. Cancelling after the
+first frame ends the image; the next
+.BR sane_start ()
+begins a new one. The option is inactive unless the source is "Transparency
+Adapter" and the model offers the same resolutions for the infrared scan.
+.PP
+The infrared frame has the same size and bit depth as the image frame. It is a
+second pass, made after the first one, so it is registered to the image only as
+well as the carriage returns to the same position. Measured on an OpticFilm 8200i
+SE in one scan at 3600 dpi, scratches and dust in the infrared frame lined up with
+the image frame to within 2 pixels (0.015 mm) in five regions, but the scanner's
+position repeats less well between separate scans (about 0.1 mm), so a frontend
+should verify the alignment and correct it. The other models have not been
+measured.
+.PP
+The plane is shading corrected, so that an empty gate reads near full scale. No
+dust detection or repair is applied; that is left to the frontend. Higher values
+mean more infrared transmitted.
+.TP
+.B \-\-source "Transparency Adapter Infrared"
+A scan of the infrared plane alone, delivered as one gray image, with no relation
+to any other scan. Use
+.B \-\-infra\-red
+for an infrared plane that goes with an image.
+.PP
+The infrared plane cannot be used to remove dust from Kodachrome slides, whose dyes
+absorb infrared much as they absorb visible light, so it carries the picture as
+well as the defects. Silver black-and-white film blocks infrared altogether.
+.PP
+.B \-\-infra\-red
+has been tested only on the OpticFilm 8200i SE.
+
 .SH EXTRAS SCAN OPTIONS
 
 .TP

@@ -124,7 +124,22 @@ void test_gl128_model()
         7200, 3600, 2400, 1800, 1440, 1200, 900, 720, 600, 300, 150
     };
     ASSERT_EQ(model.resolutions[0].resolutions_x, expected);
-    ASSERT_EQ(model.bpp_color_values, std::vector<unsigned>{ 16 });
+    ASSERT_EQ(model.bpp_color_values, (std::vector<unsigned>{ 8, 16 }));
+    ASSERT_EQ(model.bpp_gray_values, (std::vector<unsigned>{ 8, 16 }));
+}
+
+// The ASIC always delivers 16-bit samples; 8-bit output is made at the end of
+// the image pipeline, so the session stays 16-bit.
+void test_gl128_session_depth()
+{
+    Gl128Fixture f;
+    for (unsigned depth : { 8u, 16u }) {
+        auto settings = make_settings(600, 0, 0, 10, 5);
+        settings.depth = depth;
+        auto s = f.session(settings);
+        ASSERT_EQ(s.params.depth, 16u);
+        ASSERT_EQ(s.output_line_bytes, s.params.pixels * 3 * 2);
+    }
 }
 
 // Width: the native span is a multiple of lcm(4, 2 * step) and at least the
@@ -223,6 +238,7 @@ void test_gl128()
     genesys_init_motor_tables();
 
     test_gl128_model();
+    test_gl128_session_depth();
     test_gl128_session_width();
     test_gl128_session_stagger();
     test_gl128_session_mirror();

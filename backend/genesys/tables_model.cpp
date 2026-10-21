@@ -2781,9 +2781,10 @@ void genesys_init_usb_device_tables()
         }
     };
 
-    // Linear 16-bit output only.
-    model.bpp_gray_values = { 16 };
-    model.bpp_color_values = { 16 };
+    // The ASIC always delivers 16-bit samples; 8-bit output is the high byte,
+    // taken at the end of the image pipeline.
+    model.bpp_gray_values = { 8, 16 };
+    model.bpp_color_values = { 8, 16 };
     model.default_method = ScanMethod::TRANSPARENCY;
 
     // Transparency-only scanner: the flatbed geometry and the calibration

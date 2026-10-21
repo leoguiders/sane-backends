@@ -2129,7 +2129,9 @@ ScanSession CommandSetGl128::calculate_scan_session(const Genesys_Device* dev,
     // Lines at asic_dpi; the pipeline averages host_downsample of them per
     // output line.
     session.params.lines = settings.lines * host_downsample;
-    session.params.depth = settings.depth;
+    // The ASIC always delivers 16-bit samples; build_image_pipeline() reduces
+    // them to 8 bits at the end if settings.depth asks for that.
+    session.params.depth = 16;
     session.params.channels = settings.get_channels();
     session.params.scan_method = settings.scan_method;
     session.params.scan_mode = settings.scan_mode;
@@ -2197,7 +2199,7 @@ ScanSession CommandSetGl128::calculate_scan_session(const Genesys_Device* dev,
     session.output_line_count = register_lincnt / 2;
     session.optical_line_count = session.output_line_count; // not is_cis
 
-    session.output_channel_bytes = (output_pixels * settings.depth + 7) / 8;
+    session.output_channel_bytes = output_pixels * 2;
     session.output_line_bytes = session.output_channel_bytes * session.params.channels;
     session.output_line_bytes_raw = session.output_line_bytes;
     session.output_line_bytes_requested = session.output_line_bytes;

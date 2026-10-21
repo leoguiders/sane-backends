@@ -604,6 +604,12 @@ putnbyte (unsigned char *pnt, unsigned int value, unsigned int nbytes)
 
 #define SW_header_len		8
 #define SW_desc_len		64
+#define SW_desc_vendor		0x28 /* where the vuid area starts */
+
+/* the iX2500 reads the vuid area at 0x40, as in the 0x60-byte
+ * descriptors ScanSnap Home sends, with zeros at 0x28-0x3f */
+#define SW_long_desc_len	0x60
+#define SW_long_desc_vendor	0x40
 
 /* ==================================================================== */
 /* GET_WINDOW */

@@ -2485,6 +2485,13 @@ init_model (struct fujitsu *s)
   else if (strstr (s->model_name,"iX2500")){
     s->need_sc_function_4 = 1;
     s->need_scan_session = 1;
+
+    /* it reads the vuid area of each window at 0x40; with 0x40-byte
+     * descriptors, the front of a duplex scan gets the start of the back's
+     * descriptor there, and the last window whatever an earlier command left
+     * past the end: the color order then changes from job to job (rgb dots,
+     * rrr..ggg..bbb or scrambled), and backs can come out as negatives */
+    s->need_long_window = 1;
   }
 
   DBG (10, "init_model: finish\n");
@@ -7688,7 +7695,7 @@ set_window (struct fujitsu *s)
   size_t cmdLen = SET_WINDOW_len;
 
   /*this is max size, we might send less below*/
-  unsigned char out[SW_header_len + SW_desc_len + SW_desc_len];
+  unsigned char out[SW_header_len + SW_long_desc_len + SW_long_desc_len];
   size_t outLen = SW_header_len + SW_desc_len + SW_desc_len;
 
   unsigned char * header = out;                              /*header*/
@@ -7925,6 +7932,26 @@ set_window (struct fujitsu *s)
   /* output shorter if not using duplex */
   else{
     outLen -= SW_desc_len;
+  }
+
+  /* some scanners want longer descriptors, with the vuid area further in */
+  if (s->need_long_window){
+    unsigned char in[SW_header_len + SW_desc_len + SW_desc_len];
+    int i, n = (outLen - SW_header_len) / SW_desc_len;
+
+    memcpy(in, out, outLen);
+    memset(out, 0, sizeof(out));
+    memcpy(out, in, SW_header_len);
+    set_WPDB_wdblen(header, SW_long_desc_len);
+
+    for (i = 0; i < n; i++){
+      unsigned char * from = in + SW_header_len + i * SW_desc_len;
+      unsigned char * to = out + SW_header_len + i * SW_long_desc_len;
+      memcpy(to, from, SW_desc_vendor);
+      memcpy(to + SW_long_desc_vendor, from + SW_desc_vendor,
+        SW_desc_len - SW_desc_vendor);
+    }
+    outLen = SW_header_len + n * SW_long_desc_len;
   }
 
   /*build the command*/

@@ -336,6 +336,7 @@ struct fujitsu
   int no_wait_after_op;     /* some scanners don't like TUR after OP */
   int need_sc_function_4;   /* SCANNER CONTROL function goes in byte 4 (iX2500) */
   int need_scan_session;    /* open and close a session round each job (iX2500) */
+  int need_long_window;     /* 0x60-byte window descriptors (iX2500) */
 
   int has_vuid_mono;    /* mono set window data */
   int has_vuid_3091;    /* 3091/2 set window data */

@@ -2011,8 +2011,8 @@ static struct model_res settings[] = {
 
  { MODEL_FI70F, MODE_COLOR,  600, 600, 0, 2512, 32, 3498, 32, 2848*3, 2848*3,  864, 61, 2848*6, 2848*6, 2848,
    setWindowCoarseCal_FI70F_600, setWindowFineCal_FI70F_600,
-   setWindowSendCal_FI70F_600, sendCal1Header_FI70F_600,
-   sendCal2Header_FI70F_600, setWindowScan_FI70F_600 },
+   setWindowSendCal_FI70F_600, sendCal1Header_FI70F_300,
+   sendCal2Header_FI70F_300, setWindowScan_FI70F_600 },
 
  /*S1100 USB*/
 /* model        mode        xres yres  u   mxx mnx    mxy mny  lin_s pln_s pln_w  bh   cls   cps   cpw */
@@ -3360,7 +3360,9 @@ round2(float x)
  * descramble_raw). The search targets and the fine table formula were derived
  * from a PaperStream IP USB trace. */
 /* bytes in one 16-bit calibration line: s->sendcal.width_bytes */
-#define FI70F_DARK_TARGET  4330      /* coarse: lamp-off level of each segment */
+#define FI70F_DARK_TARGET  4450      /* coarse: lowest lamp-off level of each
+                                        segment; the fine table cannot lift
+                                        samples below about 4400 */
 #define FI70F_WHITE_TARGET 46500     /* coarse: brightest plane with lamp on */
 
 /* send d2 with the given window and read 'lines' 16-bit lines + 8 byte trailer */
@@ -3413,6 +3415,66 @@ fi70f_cal_mean(struct scanner *s, unsigned char *line, int plane, int seg)
     return (double)sum / n;
 }
 
+/* lowest 8 sample average of one plane of one segment in a 16-bit cal line */
+static double
+fi70f_cal_min(struct scanner *s, unsigned char *line, int plane, int seg)
+{
+    double min = 65535;
+    int t, k;
+
+    for(t = 8; t + 8 <= s->fi70f_seg_w - 8; t++){
+        long sum = 0;
+        for(k = t; k < t + 8; k++){
+            int i = ((s->fi70f_plane_off + plane*s->fi70f_plane_stride + k)*3 + seg) * 2;
+            sum += line[i] | (line[i+1] << 8);
+        }
+        min = MIN(min, sum / 8.0);
+    }
+    return min;
+}
+
+/* analog offsets: per segment, the lowest value that lifts the darkest
+ * samples to the target, with the lamp off */
+static SANE_Status
+fi70f_coarse_offsets(struct scanner *s, unsigned char *pay, unsigned char *buf)
+{
+    SANE_Status ret;
+    int lo[3] = {-128, -128, -128}, hi[3] = {127, 127, 127};
+    int i, p;
+
+    ret = lamp(s, 0);
+    while(!ret && (lo[0] < hi[0] || lo[1] < hi[1] || lo[2] < hi[2])){
+        int mid[3];
+
+        for(i = 0; i < 3; i++){
+            mid[i] = lo[i] + (hi[i] - lo[i]) / 2;
+            putnbyte(pay + 4 + i*2, mid[i] & 0xffff, 2);
+        }
+        ret = coarsecal_send_cal(s, pay);
+        if(!ret)
+            ret = fi70f_cal_read(s, WINDOW_COARSECAL, 1, buf);
+        if(ret)
+            break;
+
+        for(i = 0; i < 3; i++){
+            double m = 65535;
+            if(lo[i] >= hi[i])
+                continue;
+            for(p = 0; p < 3; p++)
+                m = MIN(m, fi70f_cal_min(s, buf, p, i));
+            DBG (15, "fi70f_coarsecal: seg %d offset %d dark %.0f\n", i, mid[i], m);
+            if(m >= FI70F_DARK_TARGET)
+                hi[i] = mid[i];
+            else
+                lo[i] = mid[i] + 1;
+        }
+    }
+    for(i = 0; i < 3; i++)
+        putnbyte(pay + 4 + i*2, lo[i] & 0xffff, 2);
+
+    return ret;
+}
+
 /* coarse calibration: per segment analog offset (lamp off), then a common
  * analog gain (lamp on). The exposure times come from the scanner (1b c7). */
 static SANE_Status
@@ -3425,7 +3487,6 @@ fi70f_coarsecal(struct scanner *s)
     unsigned char pay[28];
     size_t payLen = sizeof(pay);
     unsigned char *buf;
-    int lo[3] = {-128, -128, -128}, hi[3] = {127, 127, 127};
     int glo = 0, ghi = 0x3f;
     int i, p;
 
@@ -3445,36 +3506,9 @@ fi70f_coarsecal(struct scanner *s)
     if(!buf)
         return SANE_STATUS_NO_MEM;
 
-    /* offsets: lowest value that lifts the dark level to the target */
-    ret = lamp(s, 0);
-    while(!ret && (lo[0] < hi[0] || lo[1] < hi[1] || lo[2] < hi[2])){
-        int mid[3];
-
-        for(i = 0; i < 3; i++){
-            mid[i] = lo[i] + (hi[i] - lo[i]) / 2;
-            putnbyte(pay + 4 + i*2, mid[i] & 0xffff, 2);
-        }
-        ret = coarsecal_send_cal(s, pay);
-        if(!ret)
-            ret = fi70f_cal_read(s, WINDOW_COARSECAL, 1, buf);
-        if(ret)
-            break;
-
-        for(i = 0; i < 3; i++){
-            double m = 0;
-            if(lo[i] >= hi[i])
-                continue;
-            for(p = 0; p < 3; p++)
-                m += fi70f_cal_mean(s, buf, p, i) / 3;
-            DBG (15, "fi70f_coarsecal: seg %d offset %d dark %.0f\n", i, mid[i], m);
-            if(m >= FI70F_DARK_TARGET)
-                hi[i] = mid[i];
-            else
-                lo[i] = mid[i] + 1;
-        }
-    }
-    for(i = 0; i < 3; i++)
-        putnbyte(pay + 4 + i*2, lo[i] & 0xffff, 2);
+    /* offsets at the stored gain, then again at the final gain, since the
+     * dark level moves with the gain */
+    ret = fi70f_coarse_offsets(s, pay, buf);
 
     /* gain: highest value that keeps the brightest plane under the target */
     if(!ret)
@@ -3502,6 +3536,9 @@ fi70f_coarsecal(struct scanner *s)
     }
     for(i = 0; i < 3; i++)
         putnbyte(pay + 10 + i*2, glo, 2);
+
+    if(!ret)
+        ret = fi70f_coarse_offsets(s, pay, buf);
 
     free(buf);
 

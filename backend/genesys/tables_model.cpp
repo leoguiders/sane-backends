@@ -2828,6 +2828,10 @@ void genesys_init_usb_device_tables()
     model.gpio_id = GpioId::PLUSTEK_OPTICFILM_8200I_SE;
     model.motor_id = MotorId::PLUSTEK_OPTICFILM_8200I_SE;
 
+    // QuickScan is reported as "scan" and IntelliScan as "extra"; see
+    // CommandSetGl128::update_hardware_sensors().
+    model.buttons = GENESYS_HAS_SCAN_SW | GENESYS_HAS_EXTRA_SW;
+
     // The front end and shading are programmed by gl128.cpp before every
     // image pass. UNTESTED until the session tests have reference output.
     model.flags = ModelFlag::UNTESTED |

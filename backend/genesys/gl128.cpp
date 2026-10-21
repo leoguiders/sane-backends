@@ -2031,8 +2031,32 @@ SensorExposure CommandSetGl128::led_calibration(Genesys_Device* dev, const Genes
 void CommandSetGl128::update_hardware_sensors(struct Genesys_Scanner* s) const
 {
     DBG_HELPER(dbg);
-    (void) s;
-    // No-op: button polling is not known for this scanner.
+
+    // A press is one byte on the interrupt endpoint: 0x40 for QuickScan, 0x08 for IntelliScan.
+    // There is nothing on release or while the button is held, and the scanner keeps a press
+    // queued until it is read, so polling cannot miss one. Each press is reported as a pulse.
+    // The endpoint is silent without a press: wait only long enough for one packet (the
+    // endpoint polls every 16 ms) and read what is queued.
+    constexpr int INTERRUPT_TIMEOUT_MS = 50;
+    constexpr int MAX_PACKETS = 8;
+    for (int i = 0; i < MAX_PACKETS; i++) {
+        std::uint8_t packet = 0;
+        std::size_t size = 1;
+        if (!s->dev->interface->get_usb_device().interrupt_read(&packet, &size,
+                                                                INTERRUPT_TIMEOUT_MS))
+        {
+            break;
+        }
+        DBG(DBG_info, "GL128: button packet 0x%02x\n", packet);
+        if (packet & 0x40) {
+            s->buttons[BUTTON_SCAN_SW].write(true);
+            s->buttons[BUTTON_SCAN_SW].write(false);
+        }
+        if (packet & 0x08) {
+            s->buttons[BUTTON_EXTRA_SW].write(true);
+            s->buttons[BUTTON_EXTRA_SW].write(false);
+        }
+    }
 }
 
 void CommandSetGl128::update_home_sensor_gpio(Genesys_Device& dev) const

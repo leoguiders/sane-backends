@@ -391,7 +391,8 @@ putnbyte (unsigned char *pnt, unsigned int value, unsigned int nbytes)
 
 /* ==================================================================== */
 /* page codes used by mode_sense and mode_select */
-#define MS_pc_unk     0x2c /* Used by iX500 */
+#define MS_pc_session 0x27 /* Host session (iX2500) */
+#define MS_pc_job     0x2c /* Job start and end (iX2500), also tried on iX500 */
 #define MS_pc_patch   0x2e /* Patch code scanning */
 #define MS_pc_counter 0x2f /* Page number and counter reset */
 #define MS_pc_autocolor 0x32 /* Automatic color detection */
@@ -485,6 +486,24 @@ putnbyte (unsigned char *pnt, unsigned int value, unsigned int nbytes)
 #define MSEL_DEFAULT 0
 #define MSEL_OFF 2
 #define MSEL_ON 3
+
+/* 0x27 - host session (iX2500) */
+#define MSEL_session_len 0x26
+#define set_MSEL_session_open(sb, val) sb[0x02]=val
+#define set_MSEL_session_kind(sb, val) sb[0x05]=val
+#define MSEL_session_kind_job 0x01
+#define MSEL_session_kind_setup 0x02
+#define set_MSEL_session_host(sb, id) memcpy(sb + 0x06, id, 16)
+
+/* 0x2c - job start and end (iX2500) */
+#define MSEL_job_len 0x14
+#define set_MSEL_job_state(sb, val) sb[0x02]=val
+#define MSEL_job_start 0x04
+#define MSEL_job_end 0x05
+#define set_MSEL_job_token(sb, tok) memcpy(sb + 0x04, tok, 16)
+
+/* 0x2f - page number and counter */
+#define set_MSEL_counter_reset(sb, val) sb[0x02]=val
 
 /* ==================================================================== */
 /* RESERVE_UNIT */
@@ -753,6 +772,10 @@ putnbyte (unsigned char *pnt, unsigned int value, unsigned int nbytes)
 #define set_GHS_allocation_length(sb, len) putnbyte(sb + 0x07, len, 2)
 
 #define GHS_data_len            12
+/* the iX2500 also answers a 48-byte request, holding the ID of the
+ * connector selected on its touchscreen */
+#define GHS_connector_data_len  0x30
+#define GHS_connector_offset    0x18
 
 #define get_GHS_top(in)             getbitfield(in+0x02, 1, 7)
 #define get_GHS_fedalm(in)          getbitfield(in+0x02, 1, 5)

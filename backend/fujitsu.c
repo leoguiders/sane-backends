@@ -655,6 +655,7 @@
 #include <ctype.h> /*isspace*/
 #include <math.h> /*tan*/
 #include <unistd.h> /*usleep*/
+#include <time.h> /*time, for the iX2500 session token*/
 
 #include "../include/sane/sanei_backend.h"
 #include "../include/sane/sanei_scsi.h"
@@ -2477,11 +2478,13 @@ init_model (struct fujitsu *s)
   }
 
   /* ScanSnap iX2500: SCANNER CONTROL's function goes in byte 4; in byte 1,
-   * lamp on and cancel are refused (invalid CDB field), so the first scan
-   * waits a minute while lamp on is retried, and the cancel at the end of
-   * a job fails */
+   * lamp on and cancel are refused (invalid CDB field), the first scan waits
+   * a minute, and the scanner stays on "Scanning..." after the job. It goes
+   * back to its home screen only if the job is wrapped in a session, as
+   * ScanSnap Home does (see mode_select_session). */
   else if (strstr (s->model_name,"iX2500")){
     s->need_sc_function_4 = 1;
+    s->need_scan_session = 1;
   }
 
   DBG (10, "init_model: finish\n");
@@ -6392,7 +6395,7 @@ mode_select_unk (struct fujitsu *s, int foo)
   set_MSEL_xferlen(cmd, outLen);
 
   memset(out,0,outLen);
-  set_MSEL_pc(page, MS_pc_unk);
+  set_MSEL_pc(page, MS_pc_job);
   set_MSEL_page_len(page, MSEL_data_min_len-2);
 
   *(page + 0x02) = foo;
@@ -6665,6 +6668,137 @@ mode_select_buff (struct fujitsu *s)
   DBG (10, "mode_select_buff: finish\n");
 
   return ret;
+}
+
+/* send one MODE SELECT page, header included */
+static SANE_Status
+mode_select_page (struct fujitsu *s, unsigned char *data, size_t len)
+{
+  unsigned char cmd[MODE_SELECT_len];
+
+  memset(cmd,0,sizeof(cmd));
+  set_SCSI_opcode(cmd, MODE_SELECT_code);
+  set_MSEL_pf(cmd, 1);
+  set_MSEL_xferlen(cmd, len);
+
+  return do_cmd (s, 1, 0, cmd, sizeof(cmd), data, len, NULL, NULL);
+}
+
+/* page 0x27: open or close a host session of the given kind */
+static SANE_Status
+mode_select_host (struct fujitsu *s, int open, int kind, unsigned char *host_id)
+{
+  unsigned char out[MSEL_header_len + MSEL_session_len];
+  unsigned char * page = out + MSEL_header_len;
+
+  memset(out,0,sizeof(out));
+  set_MSEL_pc(page, MS_pc_session);
+  set_MSEL_page_len(page, MSEL_session_len-2);
+  set_MSEL_session_open(page, open ? 1 : 0);
+  set_MSEL_session_kind(page, kind);
+  set_MSEL_session_host(page, host_id);
+
+  return mode_select_page(s, out, sizeof(out));
+}
+
+/* ScanSnap Home wraps each job of an iX2500 in a session: page 0x27 opens
+ * it under the ID of the connector selected on the scanner's touchscreen,
+ * page 0x2c marks the job's start with a token, and page 0x2f resets the
+ * sheet count; at the end, 0x2c marks the job's end and 0x27 closes the
+ * session. Without one, the scanner stays on "Scanning..." after the job.
+ * Seen in a USB trace of ScanSnap Home 4.1.
+ * A job session is refused (3/80/35) under any other ID, so a scanner with
+ * no connector selected, such as one never set up with ScanSnap Home, gets
+ * a setup session instead, which takes any ID: the scanner then shows
+ * "Synchronizing" during the job, and still returns home after it. */
+static SANE_Status
+mode_select_session (struct fujitsu *s, int open)
+{
+  static const char sane_id[] = "SANE fujitsu.c  "; /* 16 chars */
+  static unsigned int jobs = 0;
+  unsigned char out[MSEL_header_len + MSEL_job_len];
+  unsigned char * page = out + MSEL_header_len;
+  SANE_Status ret = SANE_STATUS_GOOD, ret2;
+
+  DBG (10, "mode_select_session: start %d\n", open);
+
+  if (open){
+    unsigned char cmd[GET_HW_STATUS_len];
+    unsigned char in[GHS_connector_data_len];
+    size_t inLen = sizeof(in);
+    unsigned long t = (unsigned long) time (NULL);
+    unsigned long pid = (unsigned long) getpid ();
+    int i, selected = 0;
+
+    /* a token for this job: time, process and count */
+    jobs++;
+    for (i = 0; i < 4; i++){
+      s->session_job[i] = (t >> (8*i)) & 0xff;
+      s->session_job[4+i] = (pid >> (8*i)) & 0xff;
+      s->session_job[8+i] = (jobs >> (8*i)) & 0xff;
+    }
+    memcpy(s->session_job + 12, "SANE", 4);
+
+    /* the selected connector's ID comes with a longer hardware status */
+    memset(cmd,0,sizeof(cmd));
+    set_SCSI_opcode(cmd, GET_HW_STATUS_code);
+    set_GHS_allocation_length(cmd, inLen);
+    if (do_cmd (s, 1, 0, cmd, sizeof(cmd), NULL, 0, in, &inLen) == SANE_STATUS_GOOD
+      && inLen >= GHS_connector_offset + 16){
+      for (i = 0; i < 16; i++)
+        selected |= in[GHS_connector_offset + i];
+    }
+
+    if (selected){
+      memcpy(s->session_host, in + GHS_connector_offset, 16);
+      s->session_kind = MSEL_session_kind_job;
+      ret = mode_select_host(s, 1, s->session_kind, s->session_host);
+      if (ret != SANE_STATUS_GOOD)
+        DBG (5, "mode_select_session: job session refused %d\n", ret);
+    }
+    else{
+      DBG (15, "mode_select_session: no connector selected\n");
+    }
+
+    if (!selected || ret != SANE_STATUS_GOOD){
+      memcpy(s->session_host, sane_id, 16);
+      s->session_kind = MSEL_session_kind_setup;
+      ret = mode_select_host(s, 1, s->session_kind, s->session_host);
+    }
+
+    DBG (15, "mode_select_session: kind %d, host %02x%02x%02x%02x...\n",
+      s->session_kind, s->session_host[0], s->session_host[1],
+      s->session_host[2], s->session_host[3]);
+  }
+
+  /* the job's start or end */
+  memset(out,0,sizeof(out));
+  set_MSEL_pc(page, MS_pc_job);
+  set_MSEL_page_len(page, MSEL_job_len-2);
+  set_MSEL_job_state(page, open ? MSEL_job_start : MSEL_job_end);
+  set_MSEL_job_token(page, s->session_job);
+  ret2 = mode_select_page(s, out, sizeof(out));
+
+  if (open){
+    /* otherwise the sheet count on the touchscreen carries on from the last job */
+    unsigned char cnt[MSEL_header_len + MSEL_data_min_len];
+    unsigned char * cpage = cnt + MSEL_header_len;
+
+    memset(cnt,0,sizeof(cnt));
+    set_MSEL_pc(cpage, MS_pc_counter);
+    set_MSEL_page_len(cpage, MSEL_data_min_len-2);
+    set_MSEL_counter_reset(cpage, 1);
+    if (mode_select_page(s, cnt, sizeof(cnt)) != SANE_STATUS_GOOD)
+      DBG (5, "mode_select_session: WARNING: counter reset refused\n");
+  }
+  else{
+    /* closing goes 0x2c then 0x27, the reverse of opening, as ScanSnap Home does */
+    ret = mode_select_host(s, 0, s->session_kind, s->session_host);
+  }
+
+  s->session_open = open && (ret == SANE_STATUS_GOOD || ret2 == SANE_STATUS_GOOD);
+  DBG (10, "mode_select_session: finish %d %d\n", ret, ret2);
+  return ret ? ret : ret2;
 }
 
 static SANE_Status
@@ -7088,6 +7222,13 @@ sane_start (SANE_Handle handle)
         goto errors;
       }
 
+      /* open a scan session, as ScanSnap Home does */
+      if (s->need_scan_session && !s->session_open){
+        ret = mode_select_session(s, 1);
+        if (ret != SANE_STATUS_GOOD)
+          DBG (5, "sane_start: WARNING: cannot open session %d\n", ret);
+      }
+
       /* turn lamp on */
       ret = scanner_control(s, SC_function_lamp_on);
       if (ret != SANE_STATUS_GOOD) {
@@ -7292,6 +7433,10 @@ sane_start (SANE_Handle handle)
     if(s->started){
       s->cancelled = 1;
       check_for_cancel(s);
+    }
+    /* the session opens before the first page is loaded */
+    else if(s->need_scan_session && s->session_open){
+      mode_select_session(s, 0);
     }
 
     s->started = 0;
@@ -8017,6 +8162,9 @@ check_for_cancel(struct fujitsu *s)
       DBG (15, "check_for_cancel: cancelling\n");
       ret = scanner_control(s, SC_function_cancel);
     }
+
+    if (s->need_scan_session && s->session_open)
+      mode_select_session(s, 0);
 
     if (ret == SANE_STATUS_GOOD || ret == SANE_STATUS_CANCELLED) {
       ret = SANE_STATUS_CANCELLED;
@@ -9219,6 +9367,8 @@ sane_close (SANE_Handle handle)
   struct fujitsu * s = (struct fujitsu *) handle;
 
   DBG (10, "sane_close: start\n");
+  if (s->need_scan_session && s->session_open)
+    mode_select_session(s, 0);
   /*clears any held scans*/
   mode_select_buff(s);
   disconnect_fd(s);
@@ -9269,6 +9419,8 @@ sane_exit (void)
   DBG (10, "sane_exit: start\n");
 
   for (dev = fujitsu_devList; dev; dev = next) {
+      if (dev->need_scan_session && dev->session_open && dev->fd > -1)
+        mode_select_session(dev, 0);
       disconnect_fd(dev);
       next = dev->next;
       free (dev);

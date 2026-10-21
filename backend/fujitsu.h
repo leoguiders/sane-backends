@@ -334,6 +334,7 @@ struct fujitsu
   int need_diag_preread;
   int hopper_before_op;     /* some scanners don't like OP when hopper empty */
   int no_wait_after_op;     /* some scanners don't like TUR after OP */
+  int need_sc_function_4;   /* SCANNER CONTROL function goes in byte 4 (iX2500) */
 
   int has_vuid_mono;    /* mono set window data */
   int has_vuid_3091;    /* 3091/2 set window data */

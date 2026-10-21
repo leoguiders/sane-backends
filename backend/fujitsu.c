@@ -2476,6 +2476,14 @@ init_model (struct fujitsu *s)
     s->max_y_by_res[3].len = 264000;
   }
 
+  /* ScanSnap iX2500: SCANNER CONTROL's function goes in byte 4; in byte 1,
+   * lamp on and cancel are refused (invalid CDB field), so the first scan
+   * waits a minute while lamp on is retried, and the cancel at the end of
+   * a job fails */
+  else if (strstr (s->model_name,"iX2500")){
+    s->need_sc_function_4 = 1;
+  }
+
   DBG (10, "init_model: finish\n");
 
   return SANE_STATUS_GOOD;
@@ -7369,8 +7377,13 @@ scanner_control (struct fujitsu *s, int function)
 
     memset(cmd,0,cmdLen);
     set_SCSI_opcode(cmd, SCANNER_CONTROL_code);
-    set_SC_function_1 (cmd, function);
-    set_SC_function_2 (cmd, function);
+    if (s->need_sc_function_4){
+      set_SC_function_4 (cmd, function);
+    }
+    else{
+      set_SC_function_1 (cmd, function);
+      set_SC_function_2 (cmd, function);
+    }
 
     DBG (15, "scanner_control: function %d\n",function);
 

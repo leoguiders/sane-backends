@@ -832,6 +832,8 @@ putnbyte (unsigned char *pnt, unsigned int value, unsigned int nbytes)
 #define set_SC_ric(icb, val)                   setbitfield(icb + 1, 1, 4, val)
 #define set_SC_function_1(icb, val)            setbitfield(icb + 1, 0xf, 0, val)
 #define set_SC_function_2(icb, val)            icb[2] = (val >> 4)
+/* ScanSnap iX2500 (and ScanSnap Home) put the function in byte 4 */
+#define set_SC_function_4(icb, val)            icb[4] = (val)
 #define SC_function_adf                        0x00
 #define SC_function_fb                         0x01
 #define SC_function_fb_hs                      0x02

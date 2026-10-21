@@ -210,13 +210,19 @@ const Gl128DeviceTables GL128_DEVICE_TABLES[] = {
             { 0xae, 0x00 }, { 0xaf, 0xff },
         },
         // Feeds (capture: 0x3d-0x3f = 00 6e 84 and 00 33 48); window end
-        // (pyopticfilm scan_window_end_steps); SilverFast's full-frame passes
-        // end at feed2 13560 plus 13752 steps (600 dpi, LINCNT 2292).
-        28292, 13128, 27636, 13560 + 13752,
-        // pyopticfilm gl128_common y_size_ta_mm (27636 - 13128 = 14508 steps).
-        25.59f,
-        // pyopticfilm optical_end_inactive_native.
-        96,
+        // (pyopticfilm scan_window_end_steps). The second feed stops 792 steps
+        // (1.4 mm) above SilverFast's, and the image may run to 27.3 mm below
+        // that, so a default scan covers the whole film gate (a 24 mm frame
+        // plus its margins) instead of leaving 0.2-0.4 mm above and below it.
+        28292, 12336, 27636, 27815,
+        // Height of the scan window from feed2_steps to window_end_steps
+        // (15300 steps).
+        26.99f,
+        // Inactive native pixels skipped before the frame. pyopticfilm uses
+        // 96, but with it the window sits 0.34 mm too far to the film's
+        // right-hand end: the film is cut off there and the left margin is
+        // 1.2 mm. Without it the film is centred in the window.
+        0,
     },
 };
 

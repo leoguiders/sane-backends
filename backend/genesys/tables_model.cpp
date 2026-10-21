@@ -2801,10 +2801,9 @@ void genesys_init_usb_device_tables()
     model.x_offset_ta = 0.43;
     model.y_offset_ta = 28.5;
     model.x_size_ta = 36.58;
-    // The image may only run to where SilverFast's own full-frame passes end,
-    // about 25.02 mm below the top of the 25.59 mm scan window; offer 25 mm
-    // (a full 24 mm frame), so the default area scans.
-    model.y_size_ta = 25.0;
+    // The scan window runs 27.3 mm from just above the film gate to just below
+    // it (see the feed positions in gl128.cpp).
+    model.y_size_ta = 27.3;
 
     model.y_offset_sensor_to_ta = 0.0;
     model.y_offset_calib_black_ta = 6.5;

@@ -819,6 +819,12 @@
 :status :untested
 :usbid "0x05ca" "0x03e3"
 
+:model "ScanSnap iX2500"
+:interface "USB WiFi"
+:status :basic
+:usbid "0x05ca" "0x031a"
+:comment "WiFi not supported."
+
 :model "ScanSnap SV600"
 :interface "USB"
 :status :unsupported

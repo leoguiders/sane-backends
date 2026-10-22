@@ -391,7 +391,8 @@ putnbyte (unsigned char *pnt, unsigned int value, unsigned int nbytes)
 
 /* ==================================================================== */
 /* page codes used by mode_sense and mode_select */
-#define MS_pc_unk     0x2c /* Used by iX500 */
+#define MS_pc_session 0x27 /* Host session (iX2500) */
+#define MS_pc_job     0x2c /* Job start and end (iX2500), also tried on iX500 */
 #define MS_pc_patch   0x2e /* Patch code scanning */
 #define MS_pc_counter 0x2f /* Page number and counter reset */
 #define MS_pc_autocolor 0x32 /* Automatic color detection */
@@ -485,6 +486,24 @@ putnbyte (unsigned char *pnt, unsigned int value, unsigned int nbytes)
 #define MSEL_DEFAULT 0
 #define MSEL_OFF 2
 #define MSEL_ON 3
+
+/* 0x27 - host session (iX2500) */
+#define MSEL_session_len 0x26
+#define set_MSEL_session_open(sb, val) sb[0x02]=val
+#define set_MSEL_session_kind(sb, val) sb[0x05]=val
+#define MSEL_session_kind_job 0x01
+#define MSEL_session_kind_setup 0x02
+#define set_MSEL_session_host(sb, id) memcpy(sb + 0x06, id, 16)
+
+/* 0x2c - job start and end (iX2500) */
+#define MSEL_job_len 0x14
+#define set_MSEL_job_state(sb, val) sb[0x02]=val
+#define MSEL_job_start 0x04
+#define MSEL_job_end 0x05
+#define set_MSEL_job_token(sb, tok) memcpy(sb + 0x04, tok, 16)
+
+/* 0x2f - page number and counter */
+#define set_MSEL_counter_reset(sb, val) sb[0x02]=val
 
 /* ==================================================================== */
 /* RESERVE_UNIT */
@@ -585,6 +604,12 @@ putnbyte (unsigned char *pnt, unsigned int value, unsigned int nbytes)
 
 #define SW_header_len		8
 #define SW_desc_len		64
+#define SW_desc_vendor		0x28 /* where the vuid area starts */
+
+/* the iX2500 reads the vuid area at 0x40, as in the 0x60-byte
+ * descriptors ScanSnap Home sends, with zeros at 0x28-0x3f */
+#define SW_long_desc_len	0x60
+#define SW_long_desc_vendor	0x40
 
 /* ==================================================================== */
 /* GET_WINDOW */
@@ -753,6 +778,10 @@ putnbyte (unsigned char *pnt, unsigned int value, unsigned int nbytes)
 #define set_GHS_allocation_length(sb, len) putnbyte(sb + 0x07, len, 2)
 
 #define GHS_data_len            12
+/* the iX2500 also answers a 48-byte request, holding the ID of the
+ * connector selected on its touchscreen */
+#define GHS_connector_data_len  0x30
+#define GHS_connector_offset    0x18
 
 #define get_GHS_top(in)             getbitfield(in+0x02, 1, 7)
 #define get_GHS_fedalm(in)          getbitfield(in+0x02, 1, 5)
@@ -832,6 +861,8 @@ putnbyte (unsigned char *pnt, unsigned int value, unsigned int nbytes)
 #define set_SC_ric(icb, val)                   setbitfield(icb + 1, 1, 4, val)
 #define set_SC_function_1(icb, val)            setbitfield(icb + 1, 0xf, 0, val)
 #define set_SC_function_2(icb, val)            icb[2] = (val >> 4)
+/* ScanSnap iX2500 (and ScanSnap Home) put the function in byte 4 */
+#define set_SC_function_4(icb, val)            icb[4] = (val)
 #define SC_function_adf                        0x00
 #define SC_function_fb                         0x01
 #define SC_function_fb_hs                      0x02

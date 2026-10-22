@@ -206,6 +206,15 @@
 #include "epjitsu.h"
 #include "epjitsu-cmd.h"
 
+/* fi-70F CIS: 3 sensor segments of 432px at 300 dpi (864 at 600), read in
+ * parallel (byte-interleaved), once per colour; the 3 colour planes are spaced
+ * s->fi70f_plane_stride triplets apart in the raw line (958 at 300 dpi, 978 at
+ * 600 dpi on the unit this was written on; detected during calibration). */
+#define FI70F_SEGS        3
+#define FI70F_SEG_W       432  /* at 300 dpi */
+#define FI70F_X_OFFSET    4    /* dim pixels at the start of the sensor, 300 dpi */
+#define FI70F_WIDTH       1256 /* usable pixels at 300 dpi; then the glass edge */
+
 #define DEBUG 1
 #define BUILD 33
 
@@ -625,6 +634,26 @@ attach_one (const char *name)
         s->threshold_curve = 55;
     }
 
+    else if (strstr (s->sane.model, "fi-70F")){
+        DBG (15, "attach_one: Found fi-70F\n");
+
+        /* A6 flatbed, CIS with 3 segments; fi-65F style command flow with
+         * its own image layout and calibration (see fi70f_coarsecal) */
+        s->model = MODEL_FI70F;
+
+        s->has_fb = 1;
+        s->min_res = 50;
+        s->max_res = 600;
+
+        s->source = SOURCE_FLATBED;
+        s->mode = MODE_COLOR;
+        s->resolution = 300;
+        s->page_height = 5.83 * 1200;
+        s->page_width  = FI70F_WIDTH * 1200 / 300;
+
+        s->threshold = 120;
+        s->threshold_curve = 55;
+    }
     else if (strstr (s->sane.model, "fi-65F")){
         DBG (15, "attach_one: Found fi-65F\n");
 
@@ -1393,7 +1422,7 @@ sane_get_option_descriptor (SANE_Handle handle, SANE_Int option)
     opt->constraint_type = SANE_CONSTRAINT_NONE;
 
     /*flaming hack to get scanimage to hide group*/
-    if (!s->has_adf)
+    if (!s->has_adf && s->model != MODEL_FI70F)
       opt->type = SANE_TYPE_BOOL;
   }
 
@@ -1403,7 +1432,7 @@ sane_get_option_descriptor (SANE_Handle handle, SANE_Int option)
     opt->desc = SANE_DESC_SCAN;
     opt->type = SANE_TYPE_BOOL;
     opt->unit = SANE_UNIT_NONE;
-    if (s->has_adf)
+    if (s->has_adf || s->model == MODEL_FI70F)
       opt->cap = SANE_CAP_SOFT_DETECT | SANE_CAP_HARD_SELECT | SANE_CAP_ADVANCED;
     else
       opt->cap = SANE_CAP_INACTIVE;
@@ -1971,6 +2000,20 @@ static struct model_res settings[] = {
    setWindowSendCal_FI60F_600, sendCal1Header_FI60F_600,
    sendCal2Header_FI60F_600, setWindowScan_FI60F_600 },
 
+ /* Ricoh fi-70F: 2752 byte triplets per colour line holding 3 colour planes of
+  * 3x432 px (see descramble_raw), 1256 px usable; 16-bit calibration lines.
+  * Calibration has its own code (fi70f_coarsecal, fi70f_finecal). */
+/* model        mode        xres yres  u   mxx mnx    mxy mny  lin_s   pln_s   pln_w  bh   cls     cps     cpw */
+ { MODEL_FI70F, MODE_COLOR,  300, 300, 0, 1256, 32, 1749, 32, 2752*3, 2752*3,  432, 63, 2752*6, 2752*6, 2752,
+   setWindowCoarseCal_FI70F_300, setWindowFineCal_FI70F_300,
+   setWindowSendCal_FI70F_300, sendCal1Header_FI70F_300,
+   sendCal2Header_FI70F_300, setWindowScan_FI70F_300 },
+
+ { MODEL_FI70F, MODE_COLOR,  600, 600, 0, 2512, 32, 3498, 32, 2848*3, 2848*3,  864, 61, 2848*6, 2848*6, 2848,
+   setWindowCoarseCal_FI70F_600, setWindowFineCal_FI70F_600,
+   setWindowSendCal_FI70F_600, sendCal1Header_FI70F_300,
+   sendCal2Header_FI70F_300, setWindowScan_FI70F_600 },
+
  /*S1100 USB*/
 /* model        mode        xres yres  u   mxx mnx    mxy mny  lin_s pln_s pln_w  bh   cls   cps   cpw */
  { MODEL_S1100, MODE_COLOR,  300, 300, 1, 2592, 32,  5324, 32,  8912, 3160, 2592, 58, 8912, 3160, 2592,
@@ -2047,9 +2090,9 @@ change_params(struct scanner *s)
         img_heads = 1; /* image width is the same as the plane width on the S300 */
         img_pages = 2;
     }
-    else if (s->model == MODEL_S1100)
+    else if (s->model == MODEL_S1100 || s->model == MODEL_FI70F)
     {
-        img_heads = 1; /* image width is the same as the plane width on the S1000 */
+        img_heads = 1; /* single CIS head (S1100, fi-70F) */
         img_pages = 1;
     }
     else /* MODEL_FI60F or MODEL_FI65F */
@@ -2086,6 +2129,16 @@ change_params(struct scanner *s)
     /* set up the calibration scan structs */
     /* generally full width, short height, full resolution */
     s->cal_image.line_stride = settings[i].cal_line_stride;
+
+    if (s->model == MODEL_FI70F){
+        int f = settings[i].x_res / 300;
+        s->fi70f_seg_w = FI70F_SEG_W * f;
+        s->fi70f_x_off = FI70F_X_OFFSET * f;
+        s->fi70f_width = FI70F_WIDTH * f;
+        /* defaults, replaced by what the white calibration read shows */
+        s->fi70f_plane_off = (f == 2) ? 2 : 0;
+        s->fi70f_plane_stride = (f == 2) ? 978 : 958;
+    }
     s->cal_image.plane_stride = settings[i].cal_plane_stride;
     s->cal_image.plane_width = settings[i].cal_plane_width;
     s->cal_image.mode = MODE_COLOR;
@@ -2438,6 +2491,20 @@ sane_start (SANE_Handle handle)
 
     /* recent scanners need ghs called before scanning */
     ret = get_hardware_status(s);
+
+    if(s->model == MODEL_FI70F){
+        /* status bit 0 is set when the AC adapter is connected */
+        if(!(get_stat(s) & 0x01))
+            DBG (1, "sane_start: fi-70F is on USB bus power; if scans stop "
+              "part-way, connect the AC adapter\n");
+
+        /* PaperStream opens every scan with 1b d8 00 */
+        ret = fi70f_d8(s, 0);
+        if(ret){
+            DBG (5, "sane_start: ERROR: failed to d8\n");
+            return ret;
+        }
+    }
 
     /* ingest paper with adf */
     if( s->source == SOURCE_ADF_BACK || s->source == SOURCE_ADF_FRONT
@@ -2997,6 +3064,9 @@ coarsecal(struct scanner *s)
 
     payLen = sizeof(pay);
 
+    if(s->model == MODEL_FI70F)
+        return fi70f_coarsecal(s);
+
     if(s->model == MODEL_S300){
         memcpy(pay,coarseCalData_S300,payLen);
     }
@@ -3043,6 +3113,9 @@ finecal_send_cal(struct scanner *s)
     int i, j, k;
     unsigned char *p_out, *p_in = s->sendcal.buffer;
     int planes;
+    /* fi-70F sends its 16-bit interleaved cal table (sendcal.width_bytes = 2752*6),
+     * not the doubled cal_data.line_stride other models use */
+    size_t payload_len = (s->model == MODEL_FI70F) ? s->sendcal.width_bytes : s->cal_data.line_stride;
 
     DBG (10, "finecal_send_cal: start\n");
 
@@ -3055,7 +3128,12 @@ finecal_send_cal(struct scanner *s)
     /* this is reverse of descramble_raw */
     memset(s->cal_data.raw_data, 0, s->cal_data.line_stride);
 
-    if(s->model == MODEL_S1100){
+    if(s->model == MODEL_FI70F){
+      /* fi-70F send-cal is interleaved 16-bit BE, 6 bytes/px - exactly the order
+       * finecal already produced sendcal.buffer in; send it straight through. */
+      memcpy(s->cal_data.raw_data, s->sendcal.buffer, s->sendcal.width_bytes);
+    }
+    else if(s->model == MODEL_S1100){
       planes = 1;
 
       for (k = 0; k < s->sendcal.width_pix; k++){  /* column (x) */
@@ -3135,7 +3213,7 @@ finecal_send_cal(struct scanner *s)
     ret = do_cmd(
       s, 0,
       s->sendCal1Header, s->sendCal1HeaderLen,
-      s->cal_data.raw_data, s->cal_data.line_stride,
+      s->cal_data.raw_data, payload_len,
       stat, &statLen
     );
 
@@ -3175,7 +3253,7 @@ finecal_send_cal(struct scanner *s)
     ret = do_cmd(
       s, 0,
       s->sendCal2Header, s->sendCal2HeaderLen,
-      s->cal_data.raw_data, s->cal_data.line_stride,
+      s->cal_data.raw_data, payload_len,
       stat, &statLen
     );
 
@@ -3276,6 +3354,323 @@ round2(float x)
     return (float)(x >= 0.0) ? (int)(x+0.5) : (int)(x-0.5);
 }
 
+/* Ricoh fi-70F calibration.
+ * Calibration reads are 16-bit little-endian, one sample per byte position of
+ * the 8-bit scan line (same 3 colour plane x 3 segment layout, see
+ * descramble_raw). The search targets and the fine table formula were derived
+ * from a PaperStream IP USB trace. */
+/* bytes in one 16-bit calibration line: s->sendcal.width_bytes */
+#define FI70F_DARK_TARGET  4450      /* coarse: lowest lamp-off level of each
+                                        segment; the fine table cannot lift
+                                        samples below about 4400 */
+#define FI70F_WHITE_TARGET 46500     /* coarse: brightest plane with lamp on */
+
+/* send d2 with the given window and read 'lines' 16-bit lines + 8 byte trailer */
+static SANE_Status
+fi70f_cal_read(struct scanner *s, int window, int lines, unsigned char *buf)
+{
+    SANE_Status ret;
+    unsigned char cmd[] = {0x1b, 0xd2};
+    unsigned char stat[1];
+    size_t statLen = 1;
+    size_t total = (size_t)lines * s->sendcal.width_bytes + 8;
+    size_t got = 0;
+
+    ret = set_window(s, window);
+    if(ret)
+        return ret;
+
+    ret = do_cmd(s, 0, cmd, sizeof(cmd), NULL, 0, stat, &statLen);
+    if(ret)
+        return ret;
+    if(stat[0] != 6){
+        DBG (5, "fi70f_cal_read: bad d2 status\n");
+        return SANE_STATUS_IO_ERROR;
+    }
+
+    while(got < total){
+        size_t len = MIN(total - got, MAX_IMG_PASS);
+        ret = do_cmd(s, 0, NULL, 0, NULL, 0, buf + got, &len);
+        if(ret && !(ret == SANE_STATUS_EOF && len))
+            return ret;
+        if(!len)
+            return SANE_STATUS_IO_ERROR;
+        got += len;
+    }
+    return SANE_STATUS_GOOD;
+}
+
+/* average of one plane of one segment in a calibration line, skipping the
+ * segment ends */
+static double
+fi70f_cal_mean(struct scanner *s, unsigned char *line, int plane, int seg)
+{
+    long sum = 0;
+    int t, n = 0;
+
+    for(t = 40; t < s->fi70f_seg_w - 40; t++, n++){
+        int i = ((s->fi70f_plane_off + plane*s->fi70f_plane_stride + t)*3 + seg) * 2;
+        sum += line[i] | (line[i+1] << 8);
+    }
+    return (double)sum / n;
+}
+
+/* lowest 8 sample average of one plane of one segment in a 16-bit cal line */
+static double
+fi70f_cal_min(struct scanner *s, unsigned char *line, int plane, int seg)
+{
+    double min = 65535;
+    int t, k;
+
+    for(t = 8; t + 8 <= s->fi70f_seg_w - 8; t++){
+        long sum = 0;
+        for(k = t; k < t + 8; k++){
+            int i = ((s->fi70f_plane_off + plane*s->fi70f_plane_stride + k)*3 + seg) * 2;
+            sum += line[i] | (line[i+1] << 8);
+        }
+        min = MIN(min, sum / 8.0);
+    }
+    return min;
+}
+
+/* analog offsets: per segment, the lowest value that lifts the darkest
+ * samples to the target, with the lamp off */
+static SANE_Status
+fi70f_coarse_offsets(struct scanner *s, unsigned char *pay, unsigned char *buf)
+{
+    SANE_Status ret;
+    int lo[3] = {-128, -128, -128}, hi[3] = {127, 127, 127};
+    int i, p;
+
+    ret = lamp(s, 0);
+    while(!ret && (lo[0] < hi[0] || lo[1] < hi[1] || lo[2] < hi[2])){
+        int mid[3];
+
+        for(i = 0; i < 3; i++){
+            mid[i] = lo[i] + (hi[i] - lo[i]) / 2;
+            putnbyte(pay + 4 + i*2, mid[i] & 0xffff, 2);
+        }
+        ret = coarsecal_send_cal(s, pay);
+        if(!ret)
+            ret = fi70f_cal_read(s, WINDOW_COARSECAL, 1, buf);
+        if(ret)
+            break;
+
+        for(i = 0; i < 3; i++){
+            double m = 65535;
+            if(lo[i] >= hi[i])
+                continue;
+            for(p = 0; p < 3; p++)
+                m = MIN(m, fi70f_cal_min(s, buf, p, i));
+            DBG (15, "fi70f_coarsecal: seg %d offset %d dark %.0f\n", i, mid[i], m);
+            if(m >= FI70F_DARK_TARGET)
+                hi[i] = mid[i];
+            else
+                lo[i] = mid[i] + 1;
+        }
+    }
+    for(i = 0; i < 3; i++)
+        putnbyte(pay + 4 + i*2, lo[i] & 0xffff, 2);
+
+    return ret;
+}
+
+/* coarse calibration: per segment analog offset (lamp off), then a common
+ * analog gain (lamp on). The exposure times come from the scanner (1b c7). */
+static SANE_Status
+fi70f_coarsecal(struct scanner *s)
+{
+    SANE_Status ret;
+    unsigned char cmd[] = {0x1b, 0xc7};
+    unsigned char stat[1];
+    size_t statLen = 1;
+    unsigned char pay[28];
+    size_t payLen = sizeof(pay);
+    unsigned char *buf;
+    int glo = 0, ghi = 0x3f;
+    int i, p;
+
+    DBG (10, "fi70f_coarsecal: start\n");
+
+    /* stored settings; fall back to the values from the trace */
+    ret = do_cmd(s, 0, cmd, sizeof(cmd), NULL, 0, stat, &statLen);
+    if(!ret && stat[0] == 6)
+        ret = do_cmd(s, 0, NULL, 0, NULL, 0, pay, &payLen);
+    if(ret || stat[0] != 6 || payLen != sizeof(pay)){
+        DBG (5, "fi70f_coarsecal: no stored settings, using defaults\n");
+        memcpy(pay, coarseCalData_FI70F, sizeof(pay));
+    }
+    hexdump(15, "fi70f_coarsecal: stored", pay, sizeof(pay));
+
+    buf = malloc(s->sendcal.width_bytes + 8);
+    if(!buf)
+        return SANE_STATUS_NO_MEM;
+
+    /* offsets at the stored gain, then again at the final gain, since the
+     * dark level moves with the gain */
+    ret = fi70f_coarse_offsets(s, pay, buf);
+
+    /* gain: highest value that keeps the brightest plane under the target */
+    if(!ret)
+        ret = lamp(s, 1);
+    while(!ret && glo < ghi){
+        int mid = glo + (ghi - glo + 1) / 2;
+        double max = 0;
+
+        for(i = 0; i < 3; i++)
+            putnbyte(pay + 10 + i*2, mid, 2);
+        ret = coarsecal_send_cal(s, pay);
+        if(!ret)
+            ret = fi70f_cal_read(s, WINDOW_COARSECAL, 1, buf);
+        if(ret)
+            break;
+
+        for(p = 0; p < 3; p++)
+            for(i = 0; i < 3; i++)
+                max = MAX(max, fi70f_cal_mean(s, buf, p, i));
+        DBG (15, "fi70f_coarsecal: gain %d white %.0f\n", mid, max);
+        if(max <= FI70F_WHITE_TARGET)
+            glo = mid;
+        else
+            ghi = mid - 1;
+    }
+    for(i = 0; i < 3; i++)
+        putnbyte(pay + 10 + i*2, glo, 2);
+
+    if(!ret)
+        ret = fi70f_coarse_offsets(s, pay, buf);
+
+    free(buf);
+
+    if(!ret)
+        ret = coarsecal_send_cal(s, pay);
+
+    hexdump(10, "fi70f_coarsecal: result", pay, sizeof(pay));
+    DBG (10, "fi70f_coarsecal: finish %d\n", ret);
+    return ret;
+}
+
+/* find the 3 colour planes in a white calibration line: runs of lit triplets
+ * at least half a segment long, equally spaced */
+static void
+fi70f_find_planes(struct scanner *s, double *white, double *dark)
+{
+    int n = s->sendcal.width_bytes / 6;
+    int start[4], runs = 0, t, run = -1;
+    double max = 0;
+
+    for(t = 0; t < n*3; t++)
+        max = MAX(max, white[t] - dark[t]);
+
+    for(t = 0; t <= n && runs < 4; t++){
+        int lit = 0;
+        if(t < n){
+            int k;
+            for(k = 0; k < 3; k++)
+                if(white[t*3+k] - dark[t*3+k] > max * 0.3)
+                    lit = 1;
+        }
+        if(lit && run < 0)
+            run = t;
+        if(!lit && run >= 0){
+            if(t - run >= s->fi70f_seg_w / 2)
+                start[runs++] = run;
+            run = -1;
+        }
+    }
+
+    if(runs == 3 && abs((start[2] - start[1]) - (start[1] - start[0])) <= 2){
+        s->fi70f_plane_off = start[0];
+        s->fi70f_plane_stride = start[1] - start[0];
+    }
+    else
+        DBG (5, "fi70f_find_planes: %d runs, keeping defaults\n", runs);
+
+    DBG (10, "fi70f_find_planes: offset %d stride %d\n",
+      s->fi70f_plane_off, s->fi70f_plane_stride);
+}
+
+/* fine calibration: per sample table of {dark offset, white level} bytes,
+ * computed from 64 dark (lamp off) and 64 white (lamp on) lines */
+static SANE_Status
+fi70f_finecal(struct scanner *s)
+{
+    /* scale of the white byte per colour plane; sets the output white level
+     * and colour balance (values used by PaperStream IP) */
+    static const double white_scale[3] = {134.9, 136.4, 137.9};
+    SANE_Status ret;
+    size_t line = s->sendcal.width_bytes;
+    size_t len = 64 * line + 8;
+    int samples = line / 2;
+    unsigned char *dark, *light;
+    double *d, *w;
+    int i;
+
+    DBG (10, "fi70f_finecal: start\n");
+
+    dark = malloc(len);
+    light = malloc(len);
+    d = calloc(samples, sizeof(double));
+    w = calloc(samples, sizeof(double));
+    if(!dark || !light || !d || !w){
+        ret = SANE_STATUS_NO_MEM;
+        goto out;
+    }
+
+    ret = lamp(s, 0);
+    if(!ret)
+        ret = fi70f_cal_read(s, WINDOW_FINECAL, 64, dark);
+    if(!ret)
+        ret = lamp(s, 1);
+    if(!ret){
+        /* PaperStream sets this byte for the white read */
+        s->setWindowFineCal[0x33] = 0x02;
+        ret = fi70f_cal_read(s, WINDOW_FINECAL, 64, light);
+        s->setWindowFineCal[0x33] = 0x00;
+    }
+    if(ret)
+        goto out;
+
+    for(i = 0; i < samples; i++){
+        int y;
+        for(y = 0; y < 64; y++){
+            size_t o = (size_t)y * line + i*2;
+            d[i] += dark[o] | (dark[o+1] << 8);
+            w[i] += light[o] | (light[o+1] << 8);
+        }
+        d[i] /= 64;
+        w[i] /= 64;
+    }
+
+    fi70f_find_planes(s, w, d);
+
+    for(i = 0; i < samples; i++){
+        int plane = (i/3 - s->fi70f_plane_off) / s->fi70f_plane_stride;
+        int hi, lo;
+
+        plane = MAX(0, MIN(2, plane));
+        hi = MAX(0, MIN(255, round2((d[i] - 4520) / 256)));
+        lo = MAX(0, MIN(255, round2((w[i] - d[i]) / white_scale[plane] - 151)));
+        s->sendcal.buffer[i*2] = hi;
+        s->sendcal.buffer[i*2+1] = lo;
+
+        /* the table maps white - dark to 255 * white_scale */
+        s->fi70f_dark_res[i] = (d[i] - 4520 - 256*hi) * 255
+          / (white_scale[plane] * (lo + 151));
+    }
+
+    ret = finecal_send_cal(s);
+
+  out:
+    free(dark);
+    free(light);
+    free(d);
+    free(w);
+
+    DBG (10, "fi70f_finecal: finish %d\n", ret);
+    return ret;
+}
+
 static SANE_Status
 finecal(struct scanner *s)
 {
@@ -3287,6 +3682,9 @@ finecal(struct scanner *s)
     int i, j, k, idx, try_count, cal_good;
 
     DBG (10, "finecal: start\n");
+
+    if (s->model == MODEL_FI70F)
+        return fi70f_finecal(s);
 
     if (s->model == MODEL_S300 || s->model == MODEL_S1300i) { /* S300, S1300 */
         max_pages = 2;
@@ -3470,6 +3868,35 @@ finecal(struct scanner *s)
 /*
  * set scanner lamp brightness
  */
+/* fi-70F: 1b d8 + one byte. PaperStream sends 00 before calibration and
+ * 01 after the image has been read */
+static SANE_Status
+fi70f_d8(struct scanner *s, unsigned char set)
+{
+    SANE_Status ret;
+    unsigned char cmd[2] = {0x1b, 0xd8};
+    unsigned char stat[1];
+    size_t statLen = 1;
+
+    DBG (10, "fi70f_d8: start (%d)\n", set);
+
+    ret = do_cmd(s, 0, cmd, 2, NULL, 0, stat, &statLen);
+    if(ret || stat[0] != 6){
+        DBG (5, "fi70f_d8: cmd bad status?\n");
+        return ret ? ret : SANE_STATUS_IO_ERROR;
+    }
+
+    statLen = 1;
+    ret = do_cmd(s, 0, &set, 1, NULL, 0, stat, &statLen);
+    if(ret || stat[0] != 6){
+        DBG (5, "fi70f_d8: payload bad status?\n");
+        return ret ? ret : SANE_STATUS_IO_ERROR;
+    }
+
+    DBG (10, "fi70f_d8: finish\n");
+    return SANE_STATUS_GOOD;
+}
+
 static SANE_Status
 lamp(struct scanner *s, unsigned char set)
 {
@@ -3648,7 +4075,7 @@ send_lut (struct scanner *s)
         width = outLen / 2; /* 1 color, 2 bytes */
         height = width; /* square table */
     }
-    else if (s->model == MODEL_FI65F){
+    else if (s->model == MODEL_FI65F || s->model == MODEL_FI70F){
         outLen = 0x600;
         width = outLen / 6; /* 3 color, 2 bytes */
         height = width; /* square table */
@@ -3684,7 +4111,16 @@ send_lut (struct scanner *s)
       s->contrast, slope, offset);
 
     for(i=0;i<width;i++){
-      j=slope*i + offset + b;
+      double in = i;
+
+      /* the fi-70F delivers data linear in light; encode with gamma 2.2
+       * like PaperStream does, before brightness and contrast so those act
+       * on the visible image */
+      if (s->model == MODEL_FI70F){
+        in = (width-1) * pow(in / (width-1), 1/2.2);
+      }
+
+      j=slope*in + offset + b;
 
       j = MAX(j, 0);
       j = MIN(j, height-1);
@@ -3694,7 +4130,10 @@ send_lut (struct scanner *s)
             out[i*2] = (j >> 8) & 0xff;
             out[i*2+1] = j & 0xff;
         }
-        else if (s->model == MODEL_FI65F){
+        else if (s->model == MODEL_FI65F || s->model == MODEL_FI70F){
+            if (s->model == MODEL_FI70F)
+                s->fi70f_lut[i] = j;
+
             /*first table, be order*/
             out[i*2] = (j >> 8) & 0xff;
             out[i*2+1] = j & 0xff;
@@ -3719,6 +4158,18 @@ send_lut (struct scanner *s)
             /*third table, le order*/
             out[width*4 + i*2] = j & 0xff;
             out[width*4 + i*2+1] = (j >> 8) & 0x0f;
+        }
+    }
+
+    /* inverse of the fi-70F table, for fi70f_fix: the first input that
+     * reaches each output, interpolated */
+    if (s->model == MODEL_FI70F){
+        int v;
+        for(v = 0; v < 256; v++){
+            float *l = s->fi70f_lut, in;
+            for(i = 0; i < 254 && l[i+1] < v; i++);
+            in = (l[i+1] > l[i]) ? i + (v - l[i]) / (l[i+1] - l[i]) : i;
+            s->fi70f_lut_inv[v] = MAX(0, MIN(255, in));
         }
     }
 
@@ -3949,6 +4400,10 @@ sane_read (SANE_Handle handle, SANE_Byte * buf, SANE_Int max_len, SANE_Int * len
     if(s->fullscan.done && page->done){
         DBG (10, "sane_read: returning eof\n");
 
+      /* fi-70F: PaperStream closes every scan with 1b d8 01 */
+      if(s->model == MODEL_FI70F)
+        fi70f_d8(s, 1);
+
       /*S1100 needs help to turn off button*/
       if(s->model == MODEL_S1100){
         usleep(15000);
@@ -4162,6 +4617,22 @@ six5 (struct scanner *s)
 /* the output image might be lower dpi than input image, so we scale horizontally */
 /* if the input image is mirrored left to right, we do not correct it here */
 /* if the input image has padding (at the end or between heads), it is removed here */
+/* fi-70F: take out the dark level the fine table left in one 8-bit sample,
+ * going back through the tone table to the scanner's linear values */
+static int
+fi70f_fix(struct scanner *s, unsigned char v, float res)
+{
+    float in = s->fi70f_lut_inv[v] - res;
+    int i;
+
+    if(in <= 0)
+        return s->fi70f_lut[0];
+    if(in >= 255)
+        return s->fi70f_lut[255];
+    i = in;
+    return s->fi70f_lut[i] + (in - i) * (s->fi70f_lut[i+1] - s->fi70f_lut[i]) + 0.5;
+}
+
 static SANE_Status
 descramble_raw(struct scanner *s, struct transfer * tp)
 {
@@ -4264,6 +4735,43 @@ descramble_raw(struct scanner *s, struct transfer * tp)
           /*blue is first*/
           b += tp->raw_data[j*tp->line_stride + k];
 
+          ppc++;
+        }
+      }
+    }
+    else if (s->model == MODEL_FI70F){
+      /* calibration lines are handled by fi70f_coarsecal/fi70f_finecal;
+       * the raw line holds 3 colour planes (R,G,B), plane p starting at
+       * triplet fi70f_plane_off + p*fi70f_plane_stride. Within a plane, byte n
+       * of triplet t is sensor segment n, pixel t: the 3 CIS segments are read
+       * in parallel and byte-interleaved, so output column x = n*seg_w + t. */
+      int width = s->fi70f_width;
+      int seg_w = s->fi70f_seg_w;
+      int stride = s->fi70f_plane_stride*3;
+
+      for (j = 0; j < height; j++){             /* row (y) */
+        unsigned char *l0 = tp->raw_data + j*tp->line_stride;
+        int curr_col = 0;
+        int r=0, g=0, b=0, ppc=0;
+
+        for (k = 0; k <= width; k++){           /* output column (x) */
+          int this_col = k*tp->image->x_res/tp->x_res;
+          int seg = (k + s->fi70f_x_off) / seg_w;
+          int t = (k + s->fi70f_x_off) % seg_w;
+
+          if(ppc && curr_col != this_col){
+            *p_out = r/ppc; p_out++;
+            *p_out = g/ppc; p_out++;
+            *p_out = b/ppc; p_out++;
+            r = g = b = ppc = 0;
+            curr_col = this_col;
+          }
+          if(k == width || this_col >= tp->image->width_pix) break;
+
+          i = (s->fi70f_plane_off + t)*3 + seg;
+          r += fi70f_fix(s, l0[i], s->fi70f_dark_res[i]);
+          g += fi70f_fix(s, l0[i + stride], s->fi70f_dark_res[i + stride]);
+          b += fi70f_fix(s, l0[i + 2*stride], s->fi70f_dark_res[i + 2*stride]);
           ppc++;
         }
       }
@@ -4424,6 +4932,9 @@ read_from_scanner(struct scanner *s, struct transfer * tp)
     }
     else {
         DBG(5, "read_from_scanner: error reading status = %d\n", ret);
+        if(s->model == MODEL_FI70F)
+            DBG(1, "read_from_scanner: fi-70F stopped sending data; on USB bus power "
+              "from a single port it cannot drive the carriage, connect the AC adapter\n");
     }
 
     free(buf);
@@ -4448,7 +4959,7 @@ copy_block_to_page(struct scanner *s,int side)
     int image_height = block->total_bytes / block->line_stride;
     int page_width = page->image->width_pix;
     int block_page_stride = block->image->width_bytes * block->image->height;
-    int line_reverse = (side == SIDE_BACK) || (s->model == MODEL_FI60F) || (s->model == MODEL_FI65F);
+    int line_reverse = (side == SIDE_BACK) || (s->model == MODEL_FI60F) || (s->model == MODEL_FI65F) || (s->model == MODEL_FI70F);
     int i,j,k=0;
 
     int curr_in_row = s->fullscan.rx_bytes/s->fullscan.width_bytes;

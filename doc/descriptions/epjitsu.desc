@@ -78,5 +78,6 @@
 
 :model "fi-70F"
 :interface "USB"
-:status :untested
+:status :basic
 :usbid "0x05ca" "0x0308"
+:comment "Needs firmware '70f_0A02.nal' (Comet3FirmFile in the PaperStream IP installer) and the AC adapter: on bus power from one USB port the carriage stalls."

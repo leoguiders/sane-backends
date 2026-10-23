@@ -4240,6 +4240,12 @@ static Genesys_Settings calculate_scan_settings(Genesys_Scanner* s)
     settings.scan_method = s->scan_method;
     settings.scan_mode = option_string_to_scan_color_mode(s->mode);
 
+    // the infrared frame: a gray scan of the same area with infrared illumination
+    if (s->infrared_frame) {
+        settings.scan_method = ScanMethod::TRANSPARENCY_INFRARED;
+        settings.scan_mode = ScanColorMode::GRAY;
+    }
+
     settings.depth = s->bit_depth;
 
     if (settings.depth > 8) {
@@ -4331,6 +4337,11 @@ static void calc_parameters(Genesys_Scanner* s)
 
     s->dev->settings = calculate_scan_settings(s);
     s->params = calculate_scan_parameters(*s->dev, s->dev->settings);
+
+    // with the infrared option set, the image frame is followed by the infrared frame
+    if (s->infrared && !s->infrared_frame) {
+        s->params.last_frame = false;
+    }
 }
 
 static void create_bpp_list (Genesys_Scanner * s, const std::vector<unsigned>& bpp)
@@ -4521,6 +4532,33 @@ static void set_xy_range_option_values(Genesys_Scanner& s)
     s.pos_bottom_right_y = s.opt_y_range.max;
 }
 
+// The infrared plane of a visible transparency scan is a second scan with the same window and
+// resolution, so the option is offered where the model has an infrared scan method that offers the
+// same resolutions as the visible one.
+static bool infrared_pair_available(const Genesys_Scanner* s)
+{
+    const auto* model = s->dev->model;
+    if (s->scan_method != ScanMethod::TRANSPARENCY ||
+        !model->has_method(ScanMethod::TRANSPARENCY_INFRARED))
+    {
+        return false;
+    }
+    const auto& visible = model->get_resolution_settings(ScanMethod::TRANSPARENCY);
+    const auto& infrared = model->get_resolution_settings(ScanMethod::TRANSPARENCY_INFRARED);
+    return visible.resolutions_x == infrared.resolutions_x &&
+           visible.resolutions_y == infrared.resolutions_y;
+}
+
+static void update_infrared_option(Genesys_Scanner* s)
+{
+    if (infrared_pair_available(s)) {
+        s->opt[OPT_INFRARED].cap &= ~SANE_CAP_INACTIVE;
+    } else {
+        s->opt[OPT_INFRARED].cap |= SANE_CAP_INACTIVE;
+        s->infrared = false;
+    }
+}
+
 static void init_options(Genesys_Scanner* s)
 {
     DBG_HELPER(dbg);
@@ -4608,6 +4646,18 @@ static void init_options(Genesys_Scanner* s)
   s->opt[OPT_RESOLUTION].unit = SANE_UNIT_DPI;
   s->opt[OPT_RESOLUTION].constraint_type = SANE_CONSTRAINT_WORD_LIST;
     set_resolution_option_values(*s, true);
+
+    // infrared: the scan, then its infrared plane as a second frame
+    s->opt[OPT_INFRARED].name = SANE_NAME_INFRARED;
+    s->opt[OPT_INFRARED].title = SANE_TITLE_INFRARED;
+    s->opt[OPT_INFRARED].desc = SANE_I18N("Deliver the infrared plane of the scan as a second "
+                                          "frame: the image frame, then a gray frame of "
+                                          "the same area");
+    s->opt[OPT_INFRARED].type = SANE_TYPE_BOOL;
+    s->opt[OPT_INFRARED].unit = SANE_UNIT_NONE;
+    s->opt[OPT_INFRARED].constraint_type = SANE_CONSTRAINT_NONE;
+    s->infrared = false;
+    update_infrared_option(s);
 
   /* "Geometry" group: */
   s->opt[OPT_GEOMETRY_GROUP].name = SANE_NAME_GEOMETRY;
@@ -5689,6 +5739,9 @@ static void get_option_value(Genesys_Scanner* s, int option, void* val)
     case OPT_PREVIEW:
         *reinterpret_cast<SANE_Word*>(val) = s->preview;
         break;
+    case OPT_INFRARED:
+        *reinterpret_cast<SANE_Word*>(val) = s->infrared;
+        break;
     case OPT_LAMP_OFF:
         *reinterpret_cast<SANE_Word*>(val) = s->lamp_off;
         break;
@@ -5904,6 +5957,11 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
         calc_parameters(s);
         *myinfo |= SANE_INFO_RELOAD_PARAMS;
         break;
+    case OPT_INFRARED:
+        s->infrared = *reinterpret_cast<SANE_Word*>(val);
+        calc_parameters(s);
+        *myinfo |= SANE_INFO_RELOAD_PARAMS;
+        break;
     case OPT_BRIGHTNESS:
         s->brightness = *reinterpret_cast<SANE_Word*>(val);
         calc_parameters(s);
@@ -5935,6 +5993,7 @@ static void set_option_value(Genesys_Scanner* s, int option, void *val, SANE_Int
 
             set_xy_range_option_values(*s);
             set_resolution_option_values(*s, false);
+            update_infrared_option(s);
 
             *myinfo |= SANE_INFO_RELOAD_PARAMS | SANE_INFO_RELOAD_OPTIONS;
         }
@@ -6227,6 +6286,8 @@ SANE_Status sane_get_parameters(SANE_Handle handle, SANE_Parameters* params)
     });
 }
 
+static void end_frame(Genesys_Scanner* s);
+
 void sane_start_impl(SANE_Handle handle)
 {
     DBG_HELPER(dbg);
@@ -6254,13 +6315,33 @@ void sane_start_impl(SANE_Handle handle)
         });
     }
 
+    // With the infrared option set an image is two frames: the scan, then its infrared plane, which
+    // is started with a further sane_start() and no sane_cancel() in between.
+    const bool infrared_frame = s->infrared && s->infrared_frame_pending;
+    if (infrared_frame) {
+        if (dev->total_bytes_read < dev->total_bytes_to_read) {
+            throw SaneException(SANE_STATUS_DEVICE_BUSY,
+                                "the image frame has not been read completely");
+        }
+        // the image frame is complete: end it as sane_cancel() would
+        end_frame(s);
+    }
+    s->infrared_frame = infrared_frame;
+    s->infrared_frame_pending = false;
+
     // First make sure we have a current parameter set.  Some of the
     // parameters will be overwritten below, but that's OK.
 
     calc_parameters(s);
-    genesys_start_scan(dev, s->lamp_off);
+    try {
+        genesys_start_scan(dev, s->lamp_off);
+    } catch (...) {
+        s->infrared_frame = false;
+        throw;
+    }
 
     s->scanning = true;
+    s->infrared_frame_pending = s->infrared && !s->infrared_frame;
 }
 
 SANE_GENESYS_API_LINKAGE
@@ -6343,10 +6424,10 @@ SANE_Status sane_read(SANE_Handle handle, SANE_Byte * buf, SANE_Int max_len, SAN
     });
 }
 
-void sane_cancel_impl(SANE_Handle handle)
+// Ends the frame being delivered: stops the scan, parks the head and saves power.
+static void end_frame(Genesys_Scanner* s)
 {
     DBG_HELPER(dbg);
-    Genesys_Scanner* s = reinterpret_cast<Genesys_Scanner*>(handle);
     auto* dev = s->dev;
 
     s->scanning = false;
@@ -6372,6 +6453,18 @@ void sane_cancel_impl(SANE_Handle handle)
     if (!dev->parking) {
         dev->cmd_set->save_power(dev, true);
     }
+}
+
+void sane_cancel_impl(SANE_Handle handle)
+{
+    DBG_HELPER(dbg);
+    Genesys_Scanner* s = reinterpret_cast<Genesys_Scanner*>(handle);
+
+    // cancelling ends the whole image, not only the frame being delivered
+    s->infrared_frame = false;
+    s->infrared_frame_pending = false;
+
+    end_frame(s);
 }
 
 SANE_GENESYS_API_LINKAGE

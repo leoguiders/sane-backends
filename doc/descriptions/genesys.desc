@@ -75,7 +75,7 @@
 :interface "USB"
 :usbid "0x07b3" "0x1825"
 :status :basic
-:comment "GL128 based. 16-bit colour and gray transparency scans at 150-7200 dpi; no infrared yet"
+:comment "GL128 based. 8- and 16-bit colour and gray transparency scans, regular and infrared, at 150-7200 dpi; IntelliScan and QuickScan buttons"
 
 ; -----------------------------------------------------------------------------
 

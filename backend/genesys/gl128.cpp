@@ -210,13 +210,19 @@ const Gl128DeviceTables GL128_DEVICE_TABLES[] = {
             { 0xae, 0x00 }, { 0xaf, 0xff },
         },
         // Feeds (capture: 0x3d-0x3f = 00 6e 84 and 00 33 48); window end
-        // (pyopticfilm scan_window_end_steps); SilverFast's full-frame passes
-        // end at feed2 13560 plus 13752 steps (600 dpi, LINCNT 2292).
-        28292, 13128, 27636, 13560 + 13752,
-        // pyopticfilm gl128_common y_size_ta_mm (27636 - 13128 = 14508 steps).
-        25.59f,
-        // pyopticfilm optical_end_inactive_native.
-        96,
+        // (pyopticfilm scan_window_end_steps). The second feed stops 792 steps
+        // (1.4 mm) above SilverFast's, and the image may run to 27.3 mm below
+        // that, so a default scan covers the whole film gate (a 24 mm frame
+        // plus its margins) instead of leaving 0.2-0.4 mm above and below it.
+        28292, 12336, 27636, 27815,
+        // Height of the scan window from feed2_steps to window_end_steps
+        // (15300 steps).
+        26.99f,
+        // Inactive native pixels skipped before the frame. pyopticfilm uses
+        // 96, but with it the window sits 0.34 mm too far to the film's
+        // right-hand end: the film is cut off there and the left margin is
+        // 1.2 mm. Without it the film is centred in the window.
+        0,
     },
 };
 
@@ -320,23 +326,64 @@ std::array<double, 3> gl128_channel_means_u16(const std::vector<std::uint8_t>& s
 }
 
 
-// Lamp control: single writes of 0x03. 0x37 (infrared LED) is written only at
-// boot, as SilverFast does for colour scans; infrared is not supported yet.
+// Fraction of the 16-bit range the open-gate white level is brought to. The
+// image pass adds image_offset_delta to the gain codes, and the shading table
+// then scales white to full scale, so some headroom is left below the ADC
+// ceiling.
+constexpr float GL128_WHITE_TARGET = 0.87f * 65535.0f;
+
+// Gain code (registers 0x02-0x04) for a channel whose level was read at code 0,
+// or `fallback` if the strip is unusable (lamp not lit).
+int gl128_gain_code_for_level(float level, int fallback)
+{
+    if (level < 1000.0f) {
+        return fallback;
+    }
+    return compute_frontend_gain(level, GL128_WHITE_TARGET, FrontendType::ANALOG_DEVICES);
+}
+
+// Illumination. A visible scan lights the lamp (0x03); an infrared scan keeps
+// the lamp off and lights the IR LED instead (0x37 bit 2, as the vendor driver
+// does for its infrared pass). Single writes: 0x37 is never read-modify-written.
+constexpr std::uint8_t GL128_REG_IR_IDLE = 0xc0;
+
+bool gl128_is_infrared(const Genesys_Device* dev)
+{
+    return dev->settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED;
+}
+
+// Sets the IR LED, kept in dev->reg too so that the register set of the image
+// pass writes the same value. Writes only when the value changes: a visible
+// scan never touches 0x37 unless an infrared scan left the LED lit.
+void gl128_set_ir_led(Genesys_Device* dev, bool on)
+{
+    const std::uint8_t val = GL128_REG_IR_IDLE | (on ? IR_LED : 0);
+    if (!dev->reg.has_reg(REG_IR) || dev->reg.get8(REG_IR) != val) {
+        dev->interface->write_register(REG_IR, val);
+        dev->reg.init_reg(REG_IR, val);
+    }
+}
+
 void gl128_lamp_on(Genesys_Device* dev)
 {
     // Also kept in dev->reg: sanei_genesys_set_lamp_power() modifies 0x03
     // there and needs the register to exist.
-    std::uint8_t val = static_cast<std::uint8_t>(REG_0x03_XPASEL | REG_0x03_LAMPPWR);
+    const bool infrared = gl128_is_infrared(dev);
+    std::uint8_t val = static_cast<std::uint8_t>(
+            infrared ? REG_0x03_XPASEL : (REG_0x03_XPASEL | REG_0x03_LAMPPWR));
     dev->interface->write_register(REG_0x03, val);
     dev->reg.init_reg(REG_0x03, val);
+    gl128_set_ir_led(dev, infrared);
 }
 
 void gl128_lamp_off(Genesys_Device* dev)
 {
-    // Only 0x03, as SilverFast does before its dark strip (0x03=0x20). Also
-    // writing 0x37 kept the lamp lit through the dark strip.
+    // Only 0x03, as SilverFast does before its dark strip (0x03=0x20); the IR
+    // LED (0x37) is switched off only if it is on. Writing 0x37 on every
+    // visible scan kept the lamp lit through the dark strip.
     dev->interface->write_register(REG_0x03, REG_0x03_XPASEL);
     dev->reg.init_reg(REG_0x03, REG_0x03_XPASEL);
+    gl128_set_ir_led(dev, false);
 }
 
 // Lamp control pulses on 0x03, one write every 1.5 ms as in SilverFast's
@@ -1086,13 +1133,16 @@ void gl128_run_asic_shading(Genesys_Device* dev, const Genesys_Sensor& sensor,
         dev->cmd_set->set_fe(dev, sensor, AFE_SET);
     };
     const auto& t = gl128_device_tables(dev);
-    const std::array<int, 3>& level_offs = t.shading_offsets;
+    // Gain codes of the strips and the image pass; the lit-strip measurement
+    // below replaces SilverFast's fixed codes.
+    std::array<int, 3> level_offs = t.shading_offsets;
 
     // Cold start: the lamp needs to warm up, or the white strip (62 ms after
     // switching on, as SilverFast) reads 0. Read stationary lamp-on strips
     // once a second until the brightest channel changes < 1% over three
     // readings (at least 5 s, at most 60 s).
-    if (dev->lamp_warmup_pending) {
+    // The white lamp's warm-up does not apply to the IR LED.
+    if (dev->lamp_warmup_pending && !gl128_is_infrared(dev)) {
         gl128_lamp_on(dev);
         apply_fe(level_offs, t.lamp_gains);
         double prev = 0.0;
@@ -1150,6 +1200,30 @@ void gl128_run_asic_shading(Genesys_Device* dev, const Genesys_Sensor& sensor,
             "means=(%.0f,%.0f,%.0f)\n",
             p.offsets[0], p.offsets[1], p.offsets[2], p.gains[0], p.gains[1], p.gains[2],
             m[0], m[1], m[2]);
+    }
+
+    // SilverFast's gain codes saturate the white strip on units whose lamp and
+    // CCD are brighter than the capture's (every column at the ADC ceiling,
+    // so the shading table has nothing to flatten). Read the lit gate through
+    // the shading window at gain code 0 (a stationary strip: the white strip
+    // moves the carriage off home, so it has to come last) and pick a code
+    // per channel that puts white at GL128_WHITE_TARGET of full scale.
+    {
+        apply_fe({ 0, 0, 0 }, t.lamp_gains);
+        auto raw = gl128_acquire_shading_strip(dev, w, false);
+        auto lit = gl128_average_columns_chunky(raw, w.pixels, GL128_SHADING_LINES);
+        float level[3];
+        for (int c = 0; c < 3; c++) {
+            std::vector<unsigned> col(w.pixels);
+            for (unsigned x = 0; x < w.pixels; x++) {
+                col[x] = lit[x][c];
+            }
+            std::sort(col.begin(), col.end());
+            level[c] = col[std::min<std::size_t>(col.size() - 1, col.size() * 99 / 100)];
+            level_offs[c] = gl128_gain_code_for_level(level[c], t.shading_offsets[c]);
+        }
+        DBG(DBG_info, "GL128 lit gate at gain 0: (%.0f,%.0f,%.0f) -> gain codes (%d,%d,%d)\n",
+            level[0], level[1], level[2], level_offs[0], level_offs[1], level_offs[2]);
     }
     apply_fe(level_offs, t.after_probe_gains);
 
@@ -1957,8 +2031,32 @@ SensorExposure CommandSetGl128::led_calibration(Genesys_Device* dev, const Genes
 void CommandSetGl128::update_hardware_sensors(struct Genesys_Scanner* s) const
 {
     DBG_HELPER(dbg);
-    (void) s;
-    // No-op: button polling is not known for this scanner.
+
+    // A press is one byte on the interrupt endpoint: 0x40 for QuickScan, 0x08 for IntelliScan.
+    // There is nothing on release or while the button is held, and the scanner keeps a press
+    // queued until it is read, so polling cannot miss one. Each press is reported as a pulse.
+    // The endpoint is silent without a press: wait only long enough for one packet (the
+    // endpoint polls every 16 ms) and read what is queued.
+    constexpr int INTERRUPT_TIMEOUT_MS = 50;
+    constexpr int MAX_PACKETS = 8;
+    for (int i = 0; i < MAX_PACKETS; i++) {
+        std::uint8_t packet = 0;
+        std::size_t size = 1;
+        if (!s->dev->interface->get_usb_device().interrupt_read(&packet, &size,
+                                                                INTERRUPT_TIMEOUT_MS))
+        {
+            break;
+        }
+        DBG(DBG_info, "GL128: button packet 0x%02x\n", packet);
+        if (packet & 0x40) {
+            s->buttons[BUTTON_SCAN_SW].write(true);
+            s->buttons[BUTTON_SCAN_SW].write(false);
+        }
+        if (packet & 0x08) {
+            s->buttons[BUTTON_EXTRA_SW].write(true);
+            s->buttons[BUTTON_EXTRA_SW].write(false);
+        }
+    }
 }
 
 void CommandSetGl128::update_home_sensor_gpio(Genesys_Device& dev) const
@@ -2081,7 +2179,9 @@ ScanSession CommandSetGl128::calculate_scan_session(const Genesys_Device* dev,
     // Lines at asic_dpi; the pipeline averages host_downsample of them per
     // output line.
     session.params.lines = settings.lines * host_downsample;
-    session.params.depth = settings.depth;
+    // The ASIC always delivers 16-bit samples; build_image_pipeline() reduces
+    // them to 8 bits at the end if settings.depth asks for that.
+    session.params.depth = 16;
     session.params.channels = settings.get_channels();
     session.params.scan_method = settings.scan_method;
     session.params.scan_mode = settings.scan_mode;
@@ -2094,7 +2194,10 @@ ScanSession CommandSetGl128::calculate_scan_session(const Genesys_Device* dev,
         session.params.channels = 3;
         session.params.scan_mode = ScanColorMode::COLOR_SINGLE_PASS;
     }
-    session.params.color_filter = settings.color_filter;
+    // Infrared: all three channels see the same signal; use their luminance
+    // rather than the single colour filter of a visible gray scan.
+    session.params.color_filter = settings.scan_method == ScanMethod::TRANSPARENCY_INFRARED ?
+            ColorFilter::NONE : settings.color_filter;
     session.params.contrast_adjustment = dev->settings.contrast;
     session.params.brightness_adjustment = dev->settings.brightness;
     session.params.flags = ScanFlag::NONE;
@@ -2149,7 +2252,7 @@ ScanSession CommandSetGl128::calculate_scan_session(const Genesys_Device* dev,
     session.output_line_count = register_lincnt / 2;
     session.optical_line_count = session.output_line_count; // not is_cis
 
-    session.output_channel_bytes = (output_pixels * settings.depth + 7) / 8;
+    session.output_channel_bytes = output_pixels * 2;
     session.output_line_bytes = session.output_channel_bytes * session.params.channels;
     session.output_line_bytes_raw = session.output_line_bytes;
     session.output_line_bytes_requested = session.output_line_bytes;

@@ -57,6 +57,9 @@ public:
     virtual void bulk_read(std::uint8_t* buffer, std::size_t* size) = 0;
     virtual void bulk_write(const std::uint8_t* buffer, std::size_t* size) = 0;
 
+    // Reads one packet from the interrupt endpoint, waiting at most timeout_ms. Returns false
+    // if there was none.
+    virtual bool interrupt_read(std::uint8_t* buffer, std::size_t* size, int timeout_ms) = 0;
 };
 
 class UsbDevice : public IUsbDevice {
@@ -83,6 +86,7 @@ public:
                      std::uint8_t* data) override;
     void bulk_read(std::uint8_t* buffer, std::size_t* size) override;
     void bulk_write(const std::uint8_t* buffer, std::size_t* size) override;
+    bool interrupt_read(std::uint8_t* buffer, std::size_t* size, int timeout_ms) override;
 
 private:
 

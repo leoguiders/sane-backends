@@ -70,6 +70,7 @@ enum Genesys_Option
   OPT_PREVIEW,
   OPT_BIT_DEPTH,
   OPT_RESOLUTION,
+  OPT_INFRARED,
 
   OPT_GEOMETRY_GROUP,
   OPT_TL_X,			/* top-left x */
@@ -208,6 +209,14 @@ struct Genesys_Scanner
 
     // the value of the source option
     ScanMethod scan_method = ScanMethod::FLATBED;
+
+    // the value of the infrared option: the image is delivered as two frames, the scan and its
+    // infrared plane
+    bool infrared = false;
+    // the frame being delivered is the infrared plane
+    bool infrared_frame = false;
+    // the visible frame has been started and the infrared frame is the next one
+    bool infrared_frame_pending = false;
 
     std::string calibration_file;
     // Button states

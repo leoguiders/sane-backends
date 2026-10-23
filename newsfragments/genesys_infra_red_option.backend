@@ -1,0 +1,1 @@
+genesys: Added the --infra-red option, which delivers the infrared plane of a transparency scan as a second frame; tested on the Plustek OpticFilm 8200i SE.

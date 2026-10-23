@@ -115,6 +115,19 @@ void UsbDevice::control_msg(int rtype, int reg, int value, int index, int length
     TIE(sanei_usb_control_msg(device_num_, rtype, reg, value, index, length, data));
 }
 
+bool UsbDevice::interrupt_read(std::uint8_t* buffer, std::size_t* size, int timeout_ms)
+{
+    DBG_HELPER(dbg);
+    assert_is_open();
+    // sanei_usb has one timeout for all transfers. A timeout is not distinguishable from an
+    // error, and is the normal answer when nothing was pressed.
+    constexpr int default_timeout_ms = 30000;
+    sanei_usb_set_timeout(timeout_ms);
+    SANE_Status status = sanei_usb_read_int(device_num_, buffer, size);
+    sanei_usb_set_timeout(default_timeout_ms);
+    return status == SANE_STATUS_GOOD && *size > 0;
+}
+
 void UsbDevice::bulk_read(std::uint8_t* buffer, std::size_t* size)
 {
     DBG_HELPER(dbg);

@@ -1329,6 +1329,15 @@ ImagePipelineStack build_image_pipeline(const Genesys_Device& dev, const ScanSes
         pipeline.push_node<ImagePipelineNodeMirrorX>();
     }
 
+    // GL128 always scans at 16 bits; 8-bit output keeps the high byte.
+    if (dev.model->asic_type == AsicType::GL128 && dev.settings.depth == 8) {
+        if (pipeline.get_output_format() == PixelFormat::RGB161616) {
+            pipeline.push_node<ImagePipelineNodeFormatConvert>(PixelFormat::RGB888);
+        } else if (pipeline.get_output_format() == PixelFormat::I16) {
+            pipeline.push_node<ImagePipelineNodeFormatConvert>(PixelFormat::I8);
+        }
+    }
+
     return pipeline;
 }
 

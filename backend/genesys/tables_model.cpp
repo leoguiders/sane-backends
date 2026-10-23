@@ -2772,18 +2772,19 @@ void genesys_init_usb_device_tables()
     model.asic_type = AsicType::GL128;
 
     // SilverFast's resolutions; 150 and 300 dpi scan at 600 and are averaged
-    // on the host. Infrared is not supported yet.
+    // on the host.
     model.resolutions = {
         {
-            { ScanMethod::TRANSPARENCY },
+            { ScanMethod::TRANSPARENCY, ScanMethod::TRANSPARENCY_INFRARED },
             { 7200, 3600, 2400, 1800, 1440, 1200, 900, 720, 600, 300, 150 },
             { 7200, 3600, 2400, 1800, 1440, 1200, 900, 720, 600, 300, 150 },
         }
     };
 
-    // Linear 16-bit output only.
-    model.bpp_gray_values = { 16 };
-    model.bpp_color_values = { 16 };
+    // The ASIC always delivers 16-bit samples; 8-bit output is the high byte,
+    // taken at the end of the image pipeline.
+    model.bpp_gray_values = { 8, 16 };
+    model.bpp_color_values = { 8, 16 };
     model.default_method = ScanMethod::TRANSPARENCY;
 
     // Transparency-only scanner: the flatbed geometry and the calibration
@@ -2801,10 +2802,9 @@ void genesys_init_usb_device_tables()
     model.x_offset_ta = 0.43;
     model.y_offset_ta = 28.5;
     model.x_size_ta = 36.58;
-    // The image may only run to where SilverFast's own full-frame passes end,
-    // about 25.02 mm below the top of the 25.59 mm scan window; offer 25 mm
-    // (a full 24 mm frame), so the default area scans.
-    model.y_size_ta = 25.0;
+    // The scan window runs 27.3 mm from just above the film gate to just below
+    // it (see the feed positions in gl128.cpp).
+    model.y_size_ta = 27.3;
 
     model.y_offset_sensor_to_ta = 0.0;
     model.y_offset_calib_black_ta = 6.5;
@@ -2827,6 +2827,10 @@ void genesys_init_usb_device_tables()
     model.adc_id = AdcId::PLUSTEK_OPTICFILM_8200I_SE;
     model.gpio_id = GpioId::PLUSTEK_OPTICFILM_8200I_SE;
     model.motor_id = MotorId::PLUSTEK_OPTICFILM_8200I_SE;
+
+    // QuickScan is reported as "scan" and IntelliScan as "extra"; see
+    // CommandSetGl128::update_hardware_sensors().
+    model.buttons = GENESYS_HAS_SCAN_SW | GENESYS_HAS_EXTRA_SW;
 
     // The front end and shading are programmed by gl128.cpp before every
     // image pass. UNTESTED until the session tests have reference output.

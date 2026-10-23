@@ -48,6 +48,7 @@ public:
                      std::uint8_t* data) override;
     void bulk_read(std::uint8_t* buffer, std::size_t* size) override;
     void bulk_write(const std::uint8_t* buffer, std::size_t* size) override;
+    bool interrupt_read(std::uint8_t* buffer, std::size_t* size, int timeout_ms) override;
 private:
     void assert_is_open() const;
 

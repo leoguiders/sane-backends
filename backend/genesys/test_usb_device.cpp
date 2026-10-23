@@ -107,6 +107,16 @@ void TestUsbDevice::control_msg(int rtype, int reg, int value, int index, int le
     }
 }
 
+bool TestUsbDevice::interrupt_read(std::uint8_t* buffer, std::size_t* size, int timeout_ms)
+{
+    (void) buffer;
+    (void) timeout_ms;
+    DBG_HELPER(dbg);
+    assert_is_open();
+    *size = 0;
+    return false;
+}
+
 void TestUsbDevice::bulk_read(std::uint8_t* buffer, std::size_t* size)
 {
 

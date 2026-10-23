@@ -112,19 +112,59 @@ unsigned column_step(unsigned dpi)
 
 } // namespace
 
-// The model offers exactly SilverFast's resolutions, transparency only.
+// The model offers exactly SilverFast's resolutions, for the visible and the
+// infrared transparency scan.
 void test_gl128_model()
 {
     const auto& model = opticfilm_8200i_se_model();
     ASSERT_TRUE(model.asic_type == AsicType::GL128);
     ASSERT_EQ(model.resolutions.size(), 1u);
-    ASSERT_EQ(model.resolutions[0].methods.size(), 1u);
+    ASSERT_EQ(model.resolutions[0].methods.size(), 2u);
     ASSERT_TRUE(model.resolutions[0].methods[0] == ScanMethod::TRANSPARENCY);
+    ASSERT_TRUE(model.resolutions[0].methods[1] == ScanMethod::TRANSPARENCY_INFRARED);
     std::vector<unsigned> expected = {
         7200, 3600, 2400, 1800, 1440, 1200, 900, 720, 600, 300, 150
     };
     ASSERT_EQ(model.resolutions[0].resolutions_x, expected);
-    ASSERT_EQ(model.bpp_color_values, std::vector<unsigned>{ 16 });
+    ASSERT_EQ(model.bpp_color_values, (std::vector<unsigned>{ 8, 16 }));
+    ASSERT_EQ(model.bpp_gray_values, (std::vector<unsigned>{ 8, 16 }));
+}
+
+// The ASIC always delivers 16-bit samples; 8-bit output is made at the end of
+// the image pipeline, so the session stays 16-bit.
+void test_gl128_session_depth()
+{
+    Gl128Fixture f;
+    for (unsigned depth : { 8u, 16u }) {
+        auto settings = make_settings(600, 0, 0, 10, 5);
+        settings.depth = depth;
+        auto s = f.session(settings);
+        ASSERT_EQ(s.params.depth, 16u);
+        ASSERT_EQ(s.output_line_bytes, s.params.pixels * 3 * 2);
+    }
+}
+
+// The infrared scan has a sensor entry at every resolution, and its gray image
+// is the luminance of the three channels rather than one colour filter.
+void test_gl128_session_infrared()
+{
+    Gl128Fixture f;
+    Genesys_Device dev;
+    dev.model = &opticfilm_8200i_se_model();
+    for (unsigned dpi : { 150u, 300u, 600u, 720u, 900u, 1200u, 1440u, 1800u, 2400u, 3600u,
+                          7200u }) {
+        const auto& visible = sanei_genesys_find_sensor(&dev, dpi, 3, ScanMethod::TRANSPARENCY);
+        const auto& infrared = sanei_genesys_find_sensor(&dev, dpi, 3,
+                                                         ScanMethod::TRANSPARENCY_INFRARED);
+        ASSERT_EQ(infrared.register_dpiset, visible.register_dpiset);
+        ASSERT_EQ(infrared.exposure_lperiod, visible.exposure_lperiod);
+    }
+
+    auto settings = make_settings(600, 0, 0, 10, 5, ScanColorMode::GRAY);
+    settings.scan_method = ScanMethod::TRANSPARENCY_INFRARED;
+    auto s = f.session(settings);
+    ASSERT_TRUE(s.use_host_side_gray);
+    ASSERT_TRUE(s.params.color_filter == ColorFilter::NONE);
 }
 
 // Width: the native span is a multiple of lcm(4, 2 * step) and at least the
@@ -223,6 +263,8 @@ void test_gl128()
     genesys_init_motor_tables();
 
     test_gl128_model();
+    test_gl128_session_depth();
+    test_gl128_session_infrared();
     test_gl128_session_width();
     test_gl128_session_stagger();
     test_gl128_session_mirror();

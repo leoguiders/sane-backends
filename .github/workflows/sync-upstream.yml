@@ -1,0 +1,47 @@
+name: Sync with upstream SANE
+
+# Daily: mirror upstream master into "master" and merge it into "mx925".
+# Scheduled workflows only run from the default branch, so set the
+# repository's default branch to "mx925" (Settings -> General).
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: mx925
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://gitlab.com/sane-project/backends.git
+          git fetch --no-tags upstream master
+          git fetch upstream 'refs/tags/*:refs/tags/*'
+
+      - name: Update mirror branch "master"
+        run: git push origin refs/remotes/upstream/master:refs/heads/master
+
+      - name: Push upstream tags
+        run: git push origin --tags || true
+
+      - name: Merge upstream into "mx925"
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git merge-base --is-ancestor upstream/master HEAD; then
+            echo "mx925 is up to date"
+            exit 0
+          fi
+          # A merge (not a rebase) keeps this workflow file untouched, which
+          # the default GITHUB_TOKEN requires. Conflicts make the job fail,
+          # and GitHub sends a notification e-mail.
+          git merge --no-edit upstream/master
+          git push origin HEAD:mx925

@@ -177,7 +177,7 @@ test_store_device (void)
   /* walk device list to be sure mock device hasn't been stored */
   for (i = 0; i < MAX_DEVICES; i++)
     {
-      if (devices[i].devname && !strcmp (devices[i].devname, mock.devname))
+      if (devices[i].devname && !strcmp (devices[i].devname, "mock"))
 	{
 	  printf
 	    ("ERROR: device stored although there were no place for it!\n");
@@ -193,6 +193,7 @@ test_store_device (void)
   expected = device_number + 1;
 
   /* store mock device */
+  create_mock_device ("mock", &mock);
   store_device (mock);
   found = 0;
   for (i = 0; i < MAX_DEVICES && !found; i++)
@@ -949,7 +950,16 @@ main (int __sane_unused__ argc, char **argv)
   /* we should have the same initial count of detected devices */
   assert (count_detected (detected));
 
+  /* Repeated enumeration must release each replaced device reference. */
+  assert (test_scan_devices (detected, 0));
+  assert (test_scan_devices (detected, 0));
+
   /* finally free resources */
+  assert (test_exit (0));
+
+  /* A third context must work after the repeated-enumeration teardown. */
+  assert (test_init (1));
+  assert (count_detected (detected));
   assert (test_exit (0));
 
   /* all the tests are OK ! */

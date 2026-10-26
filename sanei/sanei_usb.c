@@ -404,6 +404,7 @@ store_device (device_list_type device)
           devices[i].libusb_device = device.libusb_device;
 #endif
 #ifdef HAVE_LIBUSB
+          libusb_unref_device (devices[i].lu_device);
           devices[i].lu_device = device.lu_device;
 #endif
 
@@ -428,10 +429,17 @@ store_device (device_list_type device)
       free(devices[pos].devname);
       devices[pos].devname = NULL;
     }
+#ifdef HAVE_LIBUSB
+    libusb_unref_device (devices[pos].lu_device);
+#endif
   }
   else{
     if(device_number >= MAX_DEVICES){
       DBG (3, "store_device: no room for %s\n", device.devname);
+#ifdef HAVE_LIBUSB
+      libusb_unref_device (device.lu_device);
+#endif
+      free (device.devname);
       return;
     }
     pos = device_number;
@@ -1492,6 +1500,10 @@ int i;
       DBG (4, "%s: freeing resources\n", __func__);
       for (i = 0; i < device_number; i++)
         {
+#ifdef HAVE_LIBUSB
+          libusb_unref_device (devices[i].lu_device);
+          devices[i].lu_device = NULL;
+#endif
           if (devices[i].devname != NULL)
             {
               DBG (5, "%s: freeing device %02d\n", __func__, i);
@@ -1962,7 +1974,11 @@ static void libusb_scan_devices(void)
 		busno, address);
       device.devname = strdup (devname);
       if (!device.devname)
-	return;
+        {
+          libusb_unref_device (device.lu_device);
+          libusb_free_device_list (devlist, 1);
+          return;
+        }
       device.vendor = vid;
       device.product = pid;
       device.method = sanei_usb_method_libusb;

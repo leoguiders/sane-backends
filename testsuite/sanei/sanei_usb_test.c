@@ -31,6 +31,21 @@
 
 #include "../../include/_stdint.h"
 
+#ifdef HAVE_LIBUSB
+#include <libusb.h>
+
+/* Do not rely on libusb accepting NULL: the public API does not promise it.
+ * Keep real reference counting for non-NULL devices. */
+static void
+unref_device_nonnull (libusb_device *device)
+{
+  assert (device != NULL);
+  libusb_unref_device (device);
+}
+
+#define libusb_unref_device unref_device_nonnull
+#endif
+
 /*
  * In order to avoid modifying sanei_usb.c to allow for unit tests
  * we include it so we can use its private variables and structures
@@ -38,6 +53,9 @@
  */
 #include "../../sanei/sanei_usb.c"
 
+#ifdef HAVE_LIBUSB
+#undef libusb_unref_device
+#endif
 
 /** test sanei_usb_init()
  * calls sanei_usb_init
@@ -177,7 +195,7 @@ test_store_device (void)
   /* walk device list to be sure mock device hasn't been stored */
   for (i = 0; i < MAX_DEVICES; i++)
     {
-      if (devices[i].devname && !strcmp (devices[i].devname, mock.devname))
+      if (devices[i].devname && !strcmp (devices[i].devname, "mock"))
 	{
 	  printf
 	    ("ERROR: device stored although there were no place for it!\n");
@@ -193,6 +211,7 @@ test_store_device (void)
   expected = device_number + 1;
 
   /* store mock device */
+  create_mock_device ("mock", &mock);
   store_device (mock);
   found = 0;
   for (i = 0; i < MAX_DEVICES && !found; i++)
@@ -208,6 +227,15 @@ test_store_device (void)
       return 0;
     }
 
+  /* Refresh a mock with no libusb reference, just like a repeated scan. */
+  create_mock_device ("mock", &mock);
+  store_device (mock);
+  if (device_number != expected)
+    {
+      printf ("ERROR: refreshing mock added a device!\n");
+      return 0;
+    }
+
   /* scan devices should mark it as missing, and device_number should decrease */
   sanei_usb_scan_devices ();
   found = 0;
@@ -215,7 +243,7 @@ test_store_device (void)
     {
       if (devices[i].devname
 	  && devices[i].missing == 1
-	  && !strcmp (devices[i].devname, mock.devname))
+	  && !strcmp (devices[i].devname, "mock"))
 	{
 	  found = 1;
 	}
@@ -233,7 +261,7 @@ test_store_device (void)
     {
       if (devices[i].devname
 	  && devices[i].missing == 2
-	  && !strcmp (devices[i].devname, mock.devname))
+	  && !strcmp (devices[i].devname, "mock"))
 	{
 	  found = 1;
 	}
@@ -831,6 +859,7 @@ main (int __sane_unused__ argc, char **argv)
 {
   int detected, opened, i;
   SANE_Int dn[MAX_DEVICES];
+  device_list_type mock;
 
 #ifdef HAVE_LIBUSB_LEGACY
   printf ("\n%s built with old libusb\n\n", argv[0]);
@@ -925,6 +954,10 @@ main (int __sane_unused__ argc, char **argv)
   /* check there is no opened device */
   assert (count_opened (0));
 
+  /* Teardown must also handle a cached entry without a libusb reference. */
+  create_mock_device ("exit-mock", &mock);
+  store_device (mock);
+
   /* finally free resources */
   assert (test_exit (0));
 
@@ -949,7 +982,16 @@ main (int __sane_unused__ argc, char **argv)
   /* we should have the same initial count of detected devices */
   assert (count_detected (detected));
 
+  /* Repeated enumeration must release each replaced device reference. */
+  assert (test_scan_devices (detected, 0));
+  assert (test_scan_devices (detected, 0));
+
   /* finally free resources */
+  assert (test_exit (0));
+
+  /* A third context must work after the repeated-enumeration teardown. */
+  assert (test_init (1));
+  assert (count_detected (detected));
   assert (test_exit (0));
 
   /* all the tests are OK ! */

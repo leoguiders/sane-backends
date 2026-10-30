@@ -404,7 +404,8 @@ store_device (device_list_type device)
           devices[i].libusb_device = device.libusb_device;
 #endif
 #ifdef HAVE_LIBUSB
-          libusb_unref_device (devices[i].lu_device);
+          if (devices[i].lu_device != NULL)
+            libusb_unref_device (devices[i].lu_device);
           devices[i].lu_device = device.lu_device;
 #endif
 
@@ -430,14 +431,16 @@ store_device (device_list_type device)
       devices[pos].devname = NULL;
     }
 #ifdef HAVE_LIBUSB
-    libusb_unref_device (devices[pos].lu_device);
+    if (devices[pos].lu_device != NULL)
+      libusb_unref_device (devices[pos].lu_device);
 #endif
   }
   else{
     if(device_number >= MAX_DEVICES){
       DBG (3, "store_device: no room for %s\n", device.devname);
 #ifdef HAVE_LIBUSB
-      libusb_unref_device (device.lu_device);
+      if (device.lu_device != NULL)
+        libusb_unref_device (device.lu_device);
 #endif
       free (device.devname);
       return;
@@ -1501,7 +1504,8 @@ int i;
       for (i = 0; i < device_number; i++)
         {
 #ifdef HAVE_LIBUSB
-          libusb_unref_device (devices[i].lu_device);
+          if (devices[i].lu_device != NULL)
+            libusb_unref_device (devices[i].lu_device);
           devices[i].lu_device = NULL;
 #endif
           if (devices[i].devname != NULL)

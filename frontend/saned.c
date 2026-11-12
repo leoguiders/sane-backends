@@ -88,76 +88,7 @@
 
 #include "lgetopt.h"
 
-#if defined(HAVE_POLL_H) && defined(HAVE_POLL)
-# include <poll.h>
-#else
-/*
- * This replacement poll() using select() is only designed to cover
- * our needs in run_standalone(). It should probably be extended...
- */
-struct pollfd
-{
-  int fd;
-  short events;
-  short revents;
-};
-
-#define POLLIN 0x0001
-#define POLLERR 0x0002
-
-int
-poll (struct pollfd *ufds, unsigned int nfds, int timeout);
-
-int
-poll (struct pollfd *ufds, unsigned int nfds, int timeout)
-{
-  struct pollfd *fdp;
-
-  fd_set rfds;
-  fd_set efds;
-  struct timeval tv;
-  int maxfd = 0;
-  unsigned int i;
-  int ret;
-
-  tv.tv_sec = timeout / 1000;
-  tv.tv_usec = (timeout - tv.tv_sec * 1000) * 1000;
-
-  FD_ZERO (&rfds);
-  FD_ZERO (&efds);
-
-  for (i = 0, fdp = ufds; i < nfds; i++, fdp++)
-    {
-      fdp->revents = 0;
-
-      if (fdp->events & POLLIN)
-	FD_SET (fdp->fd, &rfds);
-
-      FD_SET (fdp->fd, &efds);
-
-      maxfd = (fdp->fd > maxfd) ? fdp->fd : maxfd;
-    }
-
-  maxfd++;
-
-  ret = select (maxfd, &rfds, NULL, &efds, &tv);
-
-  if (ret < 0)
-    return ret;
-
-  for (i = 0, fdp = ufds; i < nfds; i++, fdp++)
-    {
-      if (fdp->events & POLLIN)
-	if (FD_ISSET (fdp->fd, &rfds))
-	  fdp->revents |= POLLIN;
-
-      if (FD_ISSET (fdp->fd, &efds))
-	fdp->revents |= POLLERR;
-    }
-
-  return ret;
-}
-#endif /* HAVE_SYS_POLL_H && HAVE_POLL */
+#include <poll.h>
 
 #if WITH_AVAHI
 # include <avahi-client/client.h>

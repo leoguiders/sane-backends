@@ -1336,20 +1336,17 @@ init (Wire * w)
   DBG (DBG_WARN, "init: access granted to %s@%s\n",
        default_username, remote_ip);
 
-  if (status == SANE_STATUS_GOOD)
-    {
-      status = sane_init (&be_version_code, auth_callback);
-      if (status != SANE_STATUS_GOOD)
-	DBG (DBG_ERR, "init: failed to initialize backend (%s)\n",
-	     sane_strstatus (status));
+  status = sane_init (&be_version_code, auth_callback);
+  if (status != SANE_STATUS_GOOD)
+    DBG (DBG_ERR, "init: failed to initialize backend (%s)\n",
+	 sane_strstatus (status));
 
-      if (SANE_VERSION_MAJOR (be_version_code) != V_MAJOR)
-	{
-	  DBG (DBG_ERR,
-	       "init: unexpected backend major version %d (expected %d)\n",
-	       SANE_VERSION_MAJOR (be_version_code), V_MAJOR);
-	  status = SANE_STATUS_INVAL;
-	}
+  if (SANE_VERSION_MAJOR (be_version_code) != V_MAJOR)
+    {
+      DBG (DBG_ERR,
+	   "init: unexpected backend major version %d (expected %d)\n",
+	   SANE_VERSION_MAJOR (be_version_code), V_MAJOR);
+      status = SANE_STATUS_INVAL;
     }
   reply.status = status;
   if (status != SANE_STATUS_GOOD)

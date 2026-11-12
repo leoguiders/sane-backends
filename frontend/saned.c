@@ -1360,6 +1360,40 @@ init (Wire * w)
 }
 
 #ifdef SANED_USES_AF_INDEP
+static void
+sockaddr_set_port (struct sockaddr *sa, in_port_t port)
+{
+  switch (sa->sa_family)
+    {
+      case AF_INET:
+	((struct sockaddr_in *) sa)->sin_port = htons (port);
+	break;
+#ifdef ENABLE_IPV6
+      case AF_INET6:
+	((struct sockaddr_in6 *) sa)->sin6_port = htons (port);
+	break;
+#endif /* ENABLE_IPV6 */
+      default:
+	break;
+    }
+}
+
+static in_port_t
+sockaddr_get_port (const struct sockaddr *sa)
+{
+  switch (sa->sa_family)
+    {
+      case AF_INET:
+	return ntohs (((const struct sockaddr_in *) sa)->sin_port);
+#ifdef ENABLE_IPV6
+      case AF_INET6:
+	return ntohs (((const struct sockaddr_in6 *) sa)->sin6_port);
+#endif /* ENABLE_IPV6 */
+      default:
+	return 0;
+    }
+}
+
 static int
 start_scan (Wire * w, int h, SANE_Start_Reply * reply)
 {
@@ -1371,10 +1405,6 @@ start_scan (Wire * w, int h, SANE_Start_Reply * reply)
     struct sockaddr_in6 sin6;
 #endif /* ENABLE_IPV6 */
   } data_addr;
-  struct sockaddr_in *sin;
-#ifdef ENABLE_IPV6
-  struct sockaddr_in6 *sin6;
-#endif /* ENABLE_IPV6 */
   SANE_Handle be_handle;
   int fd, len;
   in_port_t data_port;
@@ -1400,36 +1430,10 @@ start_scan (Wire * w, int h, SANE_Start_Reply * reply)
       return -1;
     }
 
-  switch (SS_FAMILY(data_addr.ss))
-    {
-      case AF_INET:
-	sin = &data_addr.sin;
-	break;
-#ifdef ENABLE_IPV6
-      case AF_INET6:
-	sin6 = &data_addr.sin6;
-	break;
-#endif /* ENABLE_IPV6 */
-      default:
-	break;
-    }
-
   /* Try to bind a port between data_port_lo and data_port_hi for the data connection */
   for (data_port = data_port_lo; data_port <= data_port_hi; data_port++)
     {
-      switch (SS_FAMILY(data_addr.ss))
-        {
-          case AF_INET:
-            sin->sin_port = htons(data_port);
-            break;
-#ifdef ENABLE_IPV6
-          case AF_INET6:
-            sin6->sin6_port = htons(data_port);
-            break;
-#endif /* ENABLE_IPV6 */
-          default:
-            break;
-       }
+      sockaddr_set_port (&data_addr.sa, data_port);
 
       DBG (DBG_INFO, "start_scan: trying to bind data port %d\n", data_port);
 
@@ -1465,21 +1469,7 @@ start_scan (Wire * w, int h, SANE_Start_Reply * reply)
       return -1;
     }
 
-  switch (SS_FAMILY(data_addr.ss))
-    {
-      case AF_INET:
-	sin = &data_addr.sin;
-	reply->port = ntohs (sin->sin_port);
-	break;
-#ifdef ENABLE_IPV6
-      case AF_INET6:
-	sin6 = &data_addr.sin6;
-	reply->port = ntohs (sin6->sin6_port);
-	break;
-#endif /* ENABLE_IPV6 */
-      default:
-	break;
-    }
+  reply->port = sockaddr_get_port (&data_addr.sa);
 
   DBG (DBG_MSG, "start_scan: using port %d for data\n", reply->port);
 

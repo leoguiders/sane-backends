@@ -195,7 +195,6 @@ typedef struct
 Handle;
 
 static SANE_Net_Procedure_Number current_request;
-static const char *prog_name;
 static int can_authorize;
 static Wire wire;
 static int num_handles;
@@ -3498,12 +3497,6 @@ main (int argc, char *argv[])
   int long_index = 0;
 
   debug = DBG_WARN;
-
-  prog_name = strrchr (argv[0], '/');
-  if (prog_name)
-    ++prog_name;
-  else
-    prog_name = argv[0];
 
   numchildren = 0;
   run_mode = SANED_RUN_INETD;

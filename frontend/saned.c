@@ -3467,8 +3467,6 @@ static void usage(char *me, int err)
   exit(err);
 }
 
-static int debug;
-
 static struct option long_options[] =
 {
 /* These options set a flag. */

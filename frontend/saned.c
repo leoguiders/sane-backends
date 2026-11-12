@@ -2231,7 +2231,6 @@ process_request (Wire * w)
 
     case SANE_NET_EXIT:
       return -1;
-      break;
 
     case SANE_NET_INIT:
     case SANE_NET_AUTHORIZE:
@@ -2459,9 +2458,6 @@ bail_out (int error)
 }
 
 void
-sig_int_term_handler (int signum);
-
-void
 sig_int_term_handler (int signum)
 {
   /* unused */
@@ -2534,9 +2530,6 @@ saned_avahi (void)
   DBG (DBG_INFO, "saned_avahi: poll loop exited\n");
 
   exit(EXIT_SUCCESS);
-
-  /* NOT REACHED */
-  return;
 
  fail:
   if (avahi_client)

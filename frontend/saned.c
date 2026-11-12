@@ -298,13 +298,6 @@ saned_debug_call (int level, const char *fmt, ...)
 
 
 static void
-reset_watchdog (void)
-{
-  if (!debug)
-    alarm (3600);
-}
-
-static void
 auth_callback (SANE_String_Const res,
 	       SANE_Char *username,
 	       SANE_Char *password)
@@ -375,8 +368,6 @@ auth_callback (SANE_String_Const res,
       DBG(DBG_ERR, "auth_callback: bad status %d\n", wire.status);
       return;
     }
-
-  reset_watchdog ();
 
   sanei_w_set_dir (&wire, WIRE_DECODE);
   sanei_w_word (&wire, &word);
@@ -1306,8 +1297,6 @@ init (Wire * w)
   SANE_Status status;
   SANE_Init_Req req;
 
-  reset_watchdog ();
-
   status = check_host (w->io.fd);
   if (status != SANE_STATUS_GOOD)
     {
@@ -1754,8 +1743,6 @@ do_scan (Wire * w, int h, int data_fd)
                    nbytes);
               status = sane_read (be_handle, buf + reader, nbytes, &length);
               DBG (DBG_INFO, "do_scan: read %d bytes from scanner\n", length);
-
-              reset_watchdog ();
 
               reader += length;
               if (reader >= (int) buffer_size)
@@ -2377,7 +2364,6 @@ handle_connection (int fd)
 
   wire.io.fd = fd;
 
-  signal (SIGALRM, quit);
   signal (SIGPIPE, quit);
 
 #ifdef TCP_NODELAY
@@ -2407,7 +2393,6 @@ handle_connection (int fd)
 
   while (1)
     {
-      reset_watchdog ();
       if (process_request (&wire) < 0)
 	break;
     }

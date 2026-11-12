@@ -3603,10 +3603,6 @@ main (int argc, char *argv[])
     {
       DBG (DBG_WARN, "saned (%s) from %s starting up\n", options, PACKAGE_STRING);
     }
-  else
-    {
-      DBG (DBG_WARN, "saned from %s ready\n", PACKAGE_STRING);
-    }
 
   if (run_mode == SANED_RUN_ALONE)
     {

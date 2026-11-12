@@ -652,7 +652,6 @@ check_v4_in_range (struct in_addr *inaddr, struct in_addr *base, char *netmask)
   uint32_t mask;
   SANE_Bool ret = SANE_FALSE;
 
-  cidr = -1;
   cidr = strtol (netmask, &end, 10);
 
   /* sanity check on the cidr value */

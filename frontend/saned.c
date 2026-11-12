@@ -24,12 +24,7 @@
    backend.
 */
 
-#ifdef _AIX
-# include "../include/lalloca.h"		/* MUST come first for AIX! */
-#endif
-
 #include "../include/sane/config.h"
-#include "../include/lalloca.h"
 #include <sys/types.h>
 
 #if defined(HAVE_GETADDRINFO) && defined (HAVE_GETNAMEINFO)
@@ -56,7 +51,6 @@
 #include <stdint.h>
 #include <string.h>
 #include <syslog.h>
-#include <time.h>
 #include <unistd.h>
 #include <limits.h>
 #ifdef HAVE_LIBC_H
@@ -75,7 +69,6 @@
 #include <sys/socket.h>
 
 #include <sys/time.h>
-#include <sys/types.h>
 #include <arpa/inet.h>
 
 #include <sys/wait.h>

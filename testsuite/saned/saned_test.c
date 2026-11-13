@@ -548,7 +548,6 @@ main (void)
 {
   debug = DBG_ERR;
   log_to_syslog = SANE_FALSE;
-  prog_name = "saned_test";
   alarm (60);
   signal (SIGPIPE, SIG_IGN);
 

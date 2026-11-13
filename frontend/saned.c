@@ -24,12 +24,7 @@
    backend.
 */
 
-#ifdef _AIX
-# include "../include/lalloca.h"		/* MUST come first for AIX! */
-#endif
-
 #include "../include/sane/config.h"
-#include "../include/lalloca.h"
 #include <sys/types.h>
 
 #if defined(HAVE_GETADDRINFO) && defined (HAVE_GETNAMEINFO)
@@ -56,7 +51,6 @@
 #include <stdint.h>
 #include <string.h>
 #include <syslog.h>
-#include <time.h>
 #include <unistd.h>
 #include <limits.h>
 #ifdef HAVE_LIBC_H
@@ -75,7 +69,6 @@
 #include <sys/socket.h>
 
 #include <sys/time.h>
-#include <sys/types.h>
 #include <arpa/inet.h>
 
 #include <sys/wait.h>
@@ -88,76 +81,7 @@
 
 #include "lgetopt.h"
 
-#if defined(HAVE_POLL_H) && defined(HAVE_POLL)
-# include <poll.h>
-#else
-/*
- * This replacement poll() using select() is only designed to cover
- * our needs in run_standalone(). It should probably be extended...
- */
-struct pollfd
-{
-  int fd;
-  short events;
-  short revents;
-};
-
-#define POLLIN 0x0001
-#define POLLERR 0x0002
-
-int
-poll (struct pollfd *ufds, unsigned int nfds, int timeout);
-
-int
-poll (struct pollfd *ufds, unsigned int nfds, int timeout)
-{
-  struct pollfd *fdp;
-
-  fd_set rfds;
-  fd_set efds;
-  struct timeval tv;
-  int maxfd = 0;
-  unsigned int i;
-  int ret;
-
-  tv.tv_sec = timeout / 1000;
-  tv.tv_usec = (timeout - tv.tv_sec * 1000) * 1000;
-
-  FD_ZERO (&rfds);
-  FD_ZERO (&efds);
-
-  for (i = 0, fdp = ufds; i < nfds; i++, fdp++)
-    {
-      fdp->revents = 0;
-
-      if (fdp->events & POLLIN)
-	FD_SET (fdp->fd, &rfds);
-
-      FD_SET (fdp->fd, &efds);
-
-      maxfd = (fdp->fd > maxfd) ? fdp->fd : maxfd;
-    }
-
-  maxfd++;
-
-  ret = select (maxfd, &rfds, NULL, &efds, &tv);
-
-  if (ret < 0)
-    return ret;
-
-  for (i = 0, fdp = ufds; i < nfds; i++, fdp++)
-    {
-      if (fdp->events & POLLIN)
-	if (FD_ISSET (fdp->fd, &rfds))
-	  fdp->revents |= POLLIN;
-
-      if (FD_ISSET (fdp->fd, &efds))
-	fdp->revents |= POLLERR;
-    }
-
-  return ret;
-}
-#endif /* HAVE_SYS_POLL_H && HAVE_POLL */
+#include <poll.h>
 
 #if WITH_AVAHI
 # include <avahi-client/client.h>
@@ -271,7 +195,6 @@ typedef struct
 Handle;
 
 static SANE_Net_Procedure_Number current_request;
-static const char *prog_name;
 static int can_authorize;
 static Wire wire;
 static int num_handles;
@@ -367,13 +290,6 @@ saned_debug_call (int level, const char *fmt, ...)
 
 
 static void
-reset_watchdog (void)
-{
-  if (!debug)
-    alarm (3600);
-}
-
-static void
 auth_callback (SANE_String_Const res,
 	       SANE_Char *username,
 	       SANE_Char *password)
@@ -444,8 +360,6 @@ auth_callback (SANE_String_Const res,
       DBG(DBG_ERR, "auth_callback: bad status %d\n", wire.status);
       return;
     }
-
-  reset_watchdog ();
 
   sanei_w_set_dir (&wire, WIRE_DECODE);
   sanei_w_word (&wire, &word);
@@ -738,7 +652,6 @@ check_v4_in_range (struct in_addr *inaddr, struct in_addr *base, char *netmask)
   uint32_t mask;
   SANE_Bool ret = SANE_FALSE;
 
-  cidr = -1;
   cidr = strtol (netmask, &end, 10);
 
   /* sanity check on the cidr value */
@@ -1375,8 +1288,6 @@ init (Wire * w)
   SANE_Status status;
   SANE_Init_Req req;
 
-  reset_watchdog ();
-
   status = check_host (w->io.fd);
   if (status != SANE_STATUS_GOOD)
     {
@@ -1425,20 +1336,17 @@ init (Wire * w)
   DBG (DBG_WARN, "init: access granted to %s@%s\n",
        default_username, remote_ip);
 
-  if (status == SANE_STATUS_GOOD)
-    {
-      status = sane_init (&be_version_code, auth_callback);
-      if (status != SANE_STATUS_GOOD)
-	DBG (DBG_ERR, "init: failed to initialize backend (%s)\n",
-	     sane_strstatus (status));
+  status = sane_init (&be_version_code, auth_callback);
+  if (status != SANE_STATUS_GOOD)
+    DBG (DBG_ERR, "init: failed to initialize backend (%s)\n",
+	 sane_strstatus (status));
 
-      if (SANE_VERSION_MAJOR (be_version_code) != V_MAJOR)
-	{
-	  DBG (DBG_ERR,
-	       "init: unexpected backend major version %d (expected %d)\n",
-	       SANE_VERSION_MAJOR (be_version_code), V_MAJOR);
-	  status = SANE_STATUS_INVAL;
-	}
+  if (SANE_VERSION_MAJOR (be_version_code) != V_MAJOR)
+    {
+      DBG (DBG_ERR,
+	   "init: unexpected backend major version %d (expected %d)\n",
+	   SANE_VERSION_MAJOR (be_version_code), V_MAJOR);
+      status = SANE_STATUS_INVAL;
     }
   reply.status = status;
   if (status != SANE_STATUS_GOOD)
@@ -1452,6 +1360,40 @@ init (Wire * w)
 }
 
 #ifdef SANED_USES_AF_INDEP
+static void
+sockaddr_set_port (struct sockaddr *sa, in_port_t port)
+{
+  switch (sa->sa_family)
+    {
+      case AF_INET:
+	((struct sockaddr_in *) sa)->sin_port = htons (port);
+	break;
+#ifdef ENABLE_IPV6
+      case AF_INET6:
+	((struct sockaddr_in6 *) sa)->sin6_port = htons (port);
+	break;
+#endif /* ENABLE_IPV6 */
+      default:
+	break;
+    }
+}
+
+static in_port_t
+sockaddr_get_port (const struct sockaddr *sa)
+{
+  switch (sa->sa_family)
+    {
+      case AF_INET:
+	return ntohs (((const struct sockaddr_in *) sa)->sin_port);
+#ifdef ENABLE_IPV6
+      case AF_INET6:
+	return ntohs (((const struct sockaddr_in6 *) sa)->sin6_port);
+#endif /* ENABLE_IPV6 */
+      default:
+	return 0;
+    }
+}
+
 static int
 start_scan (Wire * w, int h, SANE_Start_Reply * reply)
 {
@@ -1463,10 +1405,6 @@ start_scan (Wire * w, int h, SANE_Start_Reply * reply)
     struct sockaddr_in6 sin6;
 #endif /* ENABLE_IPV6 */
   } data_addr;
-  struct sockaddr_in *sin;
-#ifdef ENABLE_IPV6
-  struct sockaddr_in6 *sin6;
-#endif /* ENABLE_IPV6 */
   SANE_Handle be_handle;
   int fd, len;
   in_port_t data_port;
@@ -1492,36 +1430,10 @@ start_scan (Wire * w, int h, SANE_Start_Reply * reply)
       return -1;
     }
 
-  switch (SS_FAMILY(data_addr.ss))
-    {
-      case AF_INET:
-	sin = &data_addr.sin;
-	break;
-#ifdef ENABLE_IPV6
-      case AF_INET6:
-	sin6 = &data_addr.sin6;
-	break;
-#endif /* ENABLE_IPV6 */
-      default:
-	break;
-    }
-
   /* Try to bind a port between data_port_lo and data_port_hi for the data connection */
   for (data_port = data_port_lo; data_port <= data_port_hi; data_port++)
     {
-      switch (SS_FAMILY(data_addr.ss))
-        {
-          case AF_INET:
-            sin->sin_port = htons(data_port);
-            break;
-#ifdef ENABLE_IPV6
-          case AF_INET6:
-            sin6->sin6_port = htons(data_port);
-            break;
-#endif /* ENABLE_IPV6 */
-          default:
-            break;
-       }
+      sockaddr_set_port (&data_addr.sa, data_port);
 
       DBG (DBG_INFO, "start_scan: trying to bind data port %d\n", data_port);
 
@@ -1557,21 +1469,7 @@ start_scan (Wire * w, int h, SANE_Start_Reply * reply)
       return -1;
     }
 
-  switch (SS_FAMILY(data_addr.ss))
-    {
-      case AF_INET:
-	sin = &data_addr.sin;
-	reply->port = ntohs (sin->sin_port);
-	break;
-#ifdef ENABLE_IPV6
-      case AF_INET6:
-	sin6 = &data_addr.sin6;
-	reply->port = ntohs (sin6->sin6_port);
-	break;
-#endif /* ENABLE_IPV6 */
-      default:
-	break;
-    }
+  reply->port = sockaddr_get_port (&data_addr.sa);
 
   DBG (DBG_MSG, "start_scan: using port %d for data\n", reply->port);
 
@@ -1823,8 +1721,6 @@ do_scan (Wire * w, int h, int data_fd)
                    nbytes);
               status = sane_read (be_handle, buf + reader, nbytes, &length);
               DBG (DBG_INFO, "do_scan: read %d bytes from scanner\n", length);
-
-              reset_watchdog ();
 
               reader += length;
               if (reader >= (int) buffer_size)
@@ -2320,7 +2216,6 @@ process_request (Wire * w)
 
     case SANE_NET_EXIT:
       return -1;
-      break;
 
     case SANE_NET_INIT:
     case SANE_NET_AUTHORIZE:
@@ -2446,7 +2341,6 @@ handle_connection (int fd)
 
   wire.io.fd = fd;
 
-  signal (SIGALRM, quit);
   signal (SIGPIPE, quit);
 
 #ifdef TCP_NODELAY
@@ -2476,7 +2370,6 @@ handle_connection (int fd)
 
   while (1)
     {
-      reset_watchdog ();
       if (process_request (&wire) < 0)
 	break;
     }
@@ -2548,9 +2441,6 @@ bail_out (int error)
   close_fds(-1, -1);
   exit ((error) ? 1 : 0);
 }
-
-void
-sig_int_term_handler (int signum);
 
 void
 sig_int_term_handler (int signum)
@@ -2625,9 +2515,6 @@ saned_avahi (void)
   DBG (DBG_INFO, "saned_avahi: poll loop exited\n");
 
   exit(EXIT_SUCCESS);
-
-  /* NOT REACHED */
-  return;
 
  fail:
   if (avahi_client)
@@ -3566,8 +3453,6 @@ static void usage(char *me, int err)
   exit(err);
 }
 
-static int debug;
-
 static struct option long_options[] =
 {
 /* These options set a flag. */
@@ -3596,12 +3481,6 @@ main (int argc, char *argv[])
   int long_index = 0;
 
   debug = DBG_WARN;
-
-  prog_name = strrchr (argv[0], '/');
-  if (prog_name)
-    ++prog_name;
-  else
-    prog_name = argv[0];
 
   numchildren = 0;
   run_mode = SANED_RUN_INETD;
@@ -3700,10 +3579,6 @@ main (int argc, char *argv[])
   if (strlen(options) > 0)
     {
       DBG (DBG_WARN, "saned (%s) from %s starting up\n", options, PACKAGE_STRING);
-    }
-  else
-    {
-      DBG (DBG_WARN, "saned from %s ready\n", PACKAGE_STRING);
     }
 
   if (run_mode == SANED_RUN_ALONE)

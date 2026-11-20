@@ -13,8 +13,11 @@ SUBDIRS += sp1130n
 endif
 DIST_SUBDIRS = genesys sp1130n
 
-check_PROGRAMS = net_test
+check_PROGRAMS = net_test pixma_bjnp_timeout_test
 TESTS = $(check_PROGRAMS)
+
+pixma_bjnp_timeout_test_SOURCES = pixma_bjnp_timeout_test.c
+pixma_bjnp_timeout_test_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_builddir)/include
 
 net_test_SOURCES = net_test.c
 net_test_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir) -I$(top_srcdir)/include \

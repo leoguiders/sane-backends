@@ -1466,6 +1466,7 @@ libpixma_la_SOURCES = \
 	pixma/pixma_bjnp.c \
 	pixma/pixma_bjnp.h \
 	pixma/pixma_bjnp_private.h \
+	pixma/pixma_bjnp_timeout.h \
 	pixma/pixma_rename.h
 libpixma_la_CPPFLAGS = $(AM_CPPFLAGS) $(XML_CFLAGS) $(libcurl_CFLAGS) $(SNMP_CFLAGS) -DBACKEND_NAME=pixma
 

@@ -101,6 +101,7 @@
 #endif
 
 #include "pixma_bjnp_private.h"
+#include "pixma_bjnp_timeout.h"
 #include "pixma_bjnp.h"
 /* #include "pixma_rename.h" */
 #include "pixma.h"
@@ -702,8 +703,7 @@ udp_command (const int dev_no, char *command, int cmd_len, char *response,
 	  FD_ZERO (&fdset);
 	  FD_SET (sockfd, &fdset);
 
-	  timeout.tv_sec = device[dev_no].bjnp_ip_timeout /1000;
-	  timeout.tv_usec = device[dev_no].bjnp_ip_timeout %1000;
+	  bjnp_timeout_to_timeval (device[dev_no].bjnp_ip_timeout, &timeout);
 	}
       while (((result =
 	       select (sockfd + 1, &fdset, NULL, NULL, &timeout)) <= 0)
@@ -1433,8 +1433,7 @@ bjnp_recv_header (int devno, size_t *payload_size )
           /* Wait for the next part, ignoring interrupted waits. */
           FD_ZERO (&input);
           FD_SET (fd, &input);
-          timeout.tv_sec = device[devno].bjnp_ip_timeout / 1000;
-          timeout.tv_usec = device[devno].bjnp_ip_timeout % 1000;
+          bjnp_timeout_to_timeval (device[devno].bjnp_ip_timeout, &timeout);
         }
       while (((result = select (fd + 1, &input, NULL, NULL, &timeout)) <= 0) &&
              (errno == EINTR) && (attempt++ < BJNP_MAX_SELECT_ATTEMPTS));
@@ -1618,8 +1617,7 @@ bjnp_recv_data (int devno, SANE_Byte * buffer, size_t start_pos, size_t * len)
       /* wait for data to be received, retry on a signal being received */
       FD_ZERO (&input);
       FD_SET (fd, &input);
-      timeout.tv_sec = device[devno].bjnp_ip_timeout /1000;
-      timeout.tv_usec = device[devno].bjnp_ip_timeout %1000;
+      bjnp_timeout_to_timeval (device[devno].bjnp_ip_timeout, &timeout);
     }
   while (((result = select (fd + 1, &input, NULL, NULL, &timeout)) <= 0) &&
 	 (errno == EINTR) && (attempt++ < BJNP_MAX_SELECT_ATTEMPTS));

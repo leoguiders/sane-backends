@@ -1,0 +1,1 @@
+pixma: Correct the millisecond-to-microsecond conversion of fractional-second BJNP/MFNP network timeouts.

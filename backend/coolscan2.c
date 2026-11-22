@@ -2903,7 +2903,11 @@ cs2_scan (cs2_t * s, cs2_scan_t type)
       cs2_scanner_ready (s, CS2_STATUS_READY);
 
       cs2_init_buffer (s);
-      if ((s->type == CS2_TYPE_LS40) || (s->type == CS2_TYPE_LS4000))
+      /* The LS-50 rejects the infrared window (sense 05-24-00) unless the
+         SET WINDOW control byte is 0x80; coolscan3 sends 0x80 for the
+         same models. */
+      if ((s->type == CS2_TYPE_LS40) || (s->type == CS2_TYPE_LS4000)
+	  || (s->type == CS2_TYPE_LS50) || (s->type == CS2_TYPE_LS5000))
 	cs2_parse_cmd (s, "24 00 00 00 00 00 00 00 3a 80");
       else
 	cs2_parse_cmd (s, "24 00 00 00 00 00 00 00 3a 00");

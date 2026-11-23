@@ -772,27 +772,38 @@ get_scanner_id (const int dev_no, char *model)
   PDBG (bjnp_dbg (LOG_DEBUG2, "get_scanner_id: scanner identity:\n"));
   PDBG (bjnp_hexdump (LOG_DEBUG2, resp_buf, resp_len));
 
+  // Validate response length.
   id = (struct IDENTITY *) resp_buf;
+  if ((size_t)resp_len < sizeof(id->cmd))
+    {
+      PDBG (bjnp_dbg (LOG_DEBUG,
+                      "get_scanner_id: ERROR - identity response too short. packet len=%d.\n",
+                      resp_len));
+      return -1;
+    }
 
   if (device[dev_no].protocol == PROTOCOL_BJNP)
     {
-      // Check validity of packet: must be big enough for length and the id itself.
-      size_t payload_len = ntohl( id->cmd.payload_len );
-      if ((payload_len < sizeof(id->payload.bjnp.id_len))
-          || (payload_len < sizeof(id->payload.bjnp.id_len) + (size_t) id->payload.bjnp.id_len))
+      // Validate that there is space for the identity length and the identity bytes
+      // that it reports. id_len includes the two bytes of itself.
+      // Note also that we check that id_len must be at least 2! :O
+      if (((size_t) resp_len < sizeof(id->cmd) + sizeof(id->payload.bjnp.id_len))
+          || (ntohs (id->payload.bjnp.id_len) < sizeof(id->payload.bjnp.id_len))
+          || ((size_t) resp_len < sizeof(id->cmd) + ntohs (id->payload.bjnp.id_len)))
         {
           PDBG (bjnp_dbg (LOG_DEBUG,
-                          "get_scanner_id: ERROR - scanner id length invalid or packet too short: packet len=%zu.\n",
-                          payload_len));
+                          "get_scanner_id: ERROR - identity response too short for identity payload. packet len=%d.\n",
+                          resp_len));
           return -1;
         }
-      id_len = MIN(payload_len - sizeof(id->payload.bjnp.id_len), BJNP_IEEE1284_MAX);
+
+      id_len = MIN(ntohs(id->payload.bjnp.id_len) - sizeof(id->payload.bjnp.id_len), sizeof(scanner_id) - 1);
       strncpy(scanner_id, id->payload.bjnp.id, id_len);
       scanner_id[id_len] = '\0';
     }
   else
     {
-      id_len = MIN(ntohl( id-> cmd.payload_len ), BJNP_IEEE1284_MAX);
+      id_len = MIN(ntohl( id-> cmd.payload_len ), sizeof(scanner_id) - 1);
       strncpy(scanner_id, id->payload.mfnp.id, id_len);
       scanner_id[id_len] = '\0';
     }

@@ -485,7 +485,7 @@ usb_session_tests (void)
         {
           if (scenario == 1)
             atomic_store (&r.cancelled, 1);
-          const int errors[] = { 0, SANE_STATUS_CANCELLED, SANE_STATUS_JAMMED, SANE_STATUS_IO_ERROR, SANE_STATUS_IO_ERROR };
+          const SANE_Status errors[] = { 0, SANE_STATUS_CANCELLED, SANE_STATUS_JAMMED, SANE_STATUS_IO_ERROR, SANE_STATUS_IO_ERROR };
           assert (sanei_sp1130n_scan_next (&io, &settings, token, &session,
                                           &sheet) == errors[scenario]);
           assert (!sheet.count && !session.started && !session.stop_pending
@@ -967,7 +967,7 @@ failures (void)
           transfer,.cancelled = &r.cancelled
       };
       struct sanei_sp1130n_sheet sheet;
-      int expected[] = { SANE_STATUS_NO_MEM, SANE_STATUS_JAMMED, SANE_STATUS_IO_ERROR, SANE_STATUS_CANCELLED };
+      SANE_Status expected[] = { SANE_STATUS_NO_MEM, SANE_STATUS_JAMMED, SANE_STATUS_IO_ERROR, SANE_STATUS_CANCELLED };
       assert (sanei_sp1130n_scan_sheet (&io, &s, token, &sheet) ==
               expected[scenario]);
       assert (!sheet.count && !sheet.page[0].data && !sheet.page[1].data);
@@ -1111,7 +1111,7 @@ usb_rejected_payload_tests (void)
       };
       struct sanei_sp1130n_sheet sheet;
       fail_realloc = scenario == 0 ? 2 : 0;
-      const int expected[] = { SANE_STATUS_NO_MEM, SANE_STATUS_UNSUPPORTED, SANE_STATUS_IO_ERROR };
+      const SANE_Status expected[] = { SANE_STATUS_NO_MEM, SANE_STATUS_UNSUPPORTED, SANE_STATUS_IO_ERROR };
       assert (sanei_sp1130n_scan_sheet (&io, &settings, token, &sheet)
               == expected[scenario]);
       assert (!fail_realloc && !sheet.count && !sheet.page[0].data &&
@@ -1897,7 +1897,7 @@ maintenance_tests (void)
   uint8_t snapshot[SP_NVRAM_SIZE], output[SP_NVRAM_SIZE];
   for (unsigned i = 0; i < sizeof snapshot; ++i)
     snapshot[i] = (uint8_t) i;
-  const int expected[] = {
+  const SANE_Status expected[] = {
     SANE_STATUS_GOOD, SANE_STATUS_GOOD, SANE_STATUS_IO_ERROR, SANE_STATUS_INVAL, SANE_STATUS_CANCELLED, SANE_STATUS_CANCELLED,
     SANE_STATUS_IO_ERROR, SANE_STATUS_DEVICE_BUSY, SANE_STATUS_INVAL, SANE_STATUS_DEVICE_BUSY, SANE_STATUS_DEVICE_BUSY, SANE_STATUS_CANCELLED,
     SANE_STATUS_CANCELLED, SANE_STATUS_INVAL, SANE_STATUS_CANCELLED

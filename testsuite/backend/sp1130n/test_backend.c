@@ -502,7 +502,7 @@ prefetch_tests (void)
             assert (sane_sp1130n_start (h) == SANE_STATUS_GOOD);
           read_page (h, (10 * (side / 2 + 1) + side % 2) % 256);
         }
-      int terminal = scenario == 1 ? SANE_STATUS_JAMMED : SANE_STATUS_NO_DOCS;
+      SANE_Status terminal = scenario == 1 ? SANE_STATUS_JAMMED : SANE_STATUS_NO_DOCS;
       assert (sane_sp1130n_start (h) == terminal);
       assert (sane_sp1130n_start (h) == terminal);
       assert (scans == before + sheets);

@@ -49,6 +49,7 @@ typedef enum
   opt_threshold,
   opt_mode,
   opt_resolution,
+  opt_calibration,
   opt_non_blocking,
   opt_geometry_group,
   opt_tl_x,
@@ -396,6 +397,26 @@ init_options (CANON_Handle * chndl)
   od->constraint.word_list = resolution_list;
   chndl->val[opt_resolution].w = init_resolution;
 
+  /* opt_calibration */
+  od = &chndl->opt[opt_calibration];
+  od->name = SANE_NAME_QUALITY_CAL;
+  od->title = SANE_TITLE_QUALITY_CAL;
+  od->desc = SANE_I18N ("Correct uneven brightness and color across the "
+			"scan with a white reference, read from the scanner's "
+			"internal white strip before the scan.");
+  od->type = SANE_TYPE_BOOL;
+  od->unit = SANE_UNIT_NONE;
+  od->size = sizeof (SANE_Word);
+  od->cap = SANE_CAP_SOFT_DETECT | SANE_CAP_SOFT_SELECT;
+  od->constraint_type = SANE_CONSTRAINT_NONE;
+  od->constraint.range = 0;
+  chndl->val[opt_calibration].w = SANE_TRUE;
+  if (chndl->productcode != 0x2225)	/* only measured on the LiDE 70 */
+    {
+      od->cap |= SANE_CAP_INACTIVE;
+      chndl->val[opt_calibration].w = SANE_FALSE;
+    }
+
   /* opt_non_blocking */
   od = &chndl->opt[opt_non_blocking];
   od->name = "non-blocking";
@@ -650,6 +671,8 @@ sane_close (SANE_Handle handle)
 
   /* remove the temp file of a scan that was not read to the end */
   CANON_finish_scan (&scanner->scan);
+  clear_shading (&scanner->scan);
+  free (scanner->scan.strip);
   res = CANON_close_device (&scanner->scan);
   DBG (3, "CANON_close_device returned: %d\n", res);
   free (scanner);
@@ -739,6 +762,7 @@ sane_control_option (SANE_Handle handle, SANE_Int option, SANE_Action action,
 	       SANE_UNFIX (*(SANE_Fixed *) value),
 	       chndl->opt[option].unit == SANE_UNIT_MM ? "mm" : "dpi");
 	  break;
+	case opt_calibration:
 	case opt_non_blocking:
 	  if (chndl->val[option].w == *(SANE_Bool *) value)
 	    {
@@ -825,6 +849,7 @@ sane_control_option (SANE_Handle handle, SANE_Int option, SANE_Action action,
                  (chndl->opt[option].unit == SANE_UNIT_DPI ? "dpi" : ""));
 	    break;
 	  }
+	case opt_calibration:
 	case opt_non_blocking:
 	  *(SANE_Bool *) value = chndl->val[option].w;
 	  DBG (4,
@@ -908,23 +933,141 @@ sane_get_parameters (SANE_Handle handle, SANE_Parameters * params)
 }
 
 
+/* Reads the white strip for a scan with calibration cal (a linear color scan
+   of strip_band across the whole width) and stores the reading. The scan
+   options are restored afterwards. */
+static SANE_Status
+read_white_strip (Canon_Scanner * scanner, const Strip_Calibration * cal)
+{
+  CANON_Handle *chndl = &scanner->scan;
+  SANE_Word graymode = chndl->graymode;
+  SANE_Word resolution = chndl->val[opt_resolution].w;
+  SANE_Word tl_x = chndl->val[opt_tl_x].w, tl_y = chndl->val[opt_tl_y].w;
+  SANE_Word br_x = chndl->val[opt_br_x].w, br_y = chndl->val[opt_br_y].w;
+  int strip_dpi = strip_dpi_for (resolution);
+  unsigned char *data = NULL;
+  long size = 0, have = 0;
+  SANE_Int got;
+  SANE_Status status;
+  double top, bottom;
+  time_t start_time = time (NULL);
+
+  strip_band (strip_dpi, &top, &bottom);
+  chndl->graymode = 0;
+  chndl->val[opt_resolution].w = strip_dpi;
+  chndl->val[opt_tl_x].w = 0;
+  chndl->val[opt_br_x].w = widthRange.max;
+  chndl->val[opt_tl_y].w = SANE_FIX (top);
+  chndl->val[opt_br_y].w = SANE_FIX (bottom);
+
+  sane_get_parameters (scanner, &chndl->params);
+  status = CANON_set_scan_parameters (chndl);
+  if (status == SANE_STATUS_GOOD)
+    {
+      clear_shading (chndl);
+      chndl->linear = SANE_TRUE;
+      chndl->afe_gain = cal->afe_gain;
+      status = CANON_start_scan (chndl);
+    }
+  if (status == SANE_STATUS_GOOD)
+    {
+      size = (long) chndl->params.bytes_per_line * chndl->params.lines;
+      data = malloc (size);
+      if (!data)
+	{
+	  status = SANE_STATUS_NO_MEM;
+	}
+    }
+  while (status == SANE_STATUS_GOOD)
+    {
+      got = 0;
+      status = CANON_read (chndl, data + have,
+			   size - have > 0x10000 ? 0x10000 : size - have,
+			   &got);
+      have += got;
+      if (status == SANE_STATUS_GOOD && have == size)
+	{
+	  status = SANE_STATUS_EOF;
+	}
+    }
+  if (status == SANE_STATUS_EOF)
+    {
+      int rows = have / chndl->params.bytes_per_line;
+      status = rows > 0
+	? store_strip_reading (chndl, data, chndl->params.pixels_per_line,
+			       rows, strip_dpi, cal->afe_gain)
+	: SANE_STATUS_IO_ERROR;
+      DBG (1, "read_white_strip: %d rows at %d dpi in %ld s\n", rows,
+	   strip_dpi, (long) (time (NULL) - start_time));
+    }
+  free (data);
+  CANON_finish_scan (chndl);
+  clear_shading (chndl);
+
+  chndl->graymode = graymode;
+  chndl->val[opt_resolution].w = resolution;
+  chndl->val[opt_tl_x].w = tl_x;
+  chndl->val[opt_tl_y].w = tl_y;
+  chndl->val[opt_br_x].w = br_x;
+  chndl->val[opt_br_y].w = br_y;
+  return status;
+}
+
+
 SANE_Status
 sane_start (SANE_Handle handle)
 {
   Canon_Scanner *scanner = handle;
   CANON_Handle *chndl = &scanner->scan;
+  const Strip_Calibration *cal = NULL;
   SANE_Status res;
 
   DBG (3, "sane_start\n");
 
   /* a cancel from before this scan */
   cancel_requested = 0;
+  clear_shading (chndl);
+
+  if (chndl->val[opt_calibration].w)
+    {
+      cal = strip_calibration_for (chndl, chndl->val[opt_resolution].w);
+    }
+  if (cal && !strip_reading_is_current (chndl, cal,
+					chndl->val[opt_resolution].w))
+    {
+      res = read_white_strip (scanner, cal);
+      if (res == SANE_STATUS_CANCELLED)
+	return res;
+      if (res != SANE_STATUS_GOOD)
+	{
+	  DBG (1, "sane_start: reading the white strip failed (%s), "
+	       "scanning uncalibrated\n", sane_strstatus (res));
+	  cal = NULL;
+	}
+    }
+  else if (cal)
+    {
+      DBG (1, "sane_start: reusing the white strip reading from %ld s ago\n",
+	   (long) (time (NULL) - chndl->strip_time));
+    }
 
   res = sane_get_parameters (handle, &chndl->params);
   res = CANON_set_scan_parameters (&scanner->scan);
 
   if (res != SANE_STATUS_GOOD)
     return res;
+
+  if (cal && make_shading (chndl, cal) == SANE_STATUS_GOOD)
+    {
+      chndl->linear = SANE_TRUE;
+      chndl->afe_gain = cal->afe_gain;
+    }
+  else if (cal)
+    {
+      /* an unusable reading: read the strip again next time */
+      free (chndl->strip);
+      chndl->strip = NULL;
+    }
 
   return CANON_start_scan (&scanner->scan);
 }

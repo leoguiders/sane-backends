@@ -1,0 +1,1 @@
+canon_lide70: Add shading calibration for the LiDE 70 (option --quality-cal, on by default): the scanner's internal white strip is read before a scan and used to correct each sensor column, removing vertical stripes and the red/pink tint on white pages.

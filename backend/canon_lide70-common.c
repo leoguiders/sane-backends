@@ -87,6 +87,16 @@ typedef struct CANON_Handle
   unsigned char highlight_red_enhanced;
   unsigned char highlight_blue_reduced;
   unsigned char highlight_other;
+  /* shading calibration (see make_shading) */
+  SANE_Bool linear;		/* identity gamma tables: linear sensor values */
+  int afe_gain;			/* analog front end gain code, 0: default */
+  unsigned short *shading;	/* per byte of a line: gain, 8.8 fixed point */
+  unsigned char shading_gamma[256];	/* applied after the gain */
+  float *strip;			/* last strip reading, strip_columns per color */
+  int strip_columns;
+  int strip_dpi;
+  int strip_gain;
+  time_t strip_time;
 }
 CANON_Handle;
 
@@ -264,11 +274,51 @@ makegammatable (double gamma, int highlight, unsigned char *buf)
   return;
 }
 
+/* Identity gamma table: the scanner returns linear sensor values.
+
+   buf (260 bytes) is sent as is by cp2155_write_gamma_block, in the same
+   layout as makegammatable's:
+     buf[0..1]    0x04 0x70: the CP2155 register the table is written to
+     buf[2..3]    0x00 0x01: its length, little-endian (0x0100 = 256 bytes)
+     buf[4..259]  the table: the output for each 8-bit input 0..255, so
+                  entry `in` is at buf[in + 4] */
+static void
+make_linear_gamma_table (unsigned char *buf)
+{
+  int in;
+
+  buf[0] = 0x04;
+  buf[1] = 0x70;
+  buf[2] = 0x00;
+  buf[3] = 0x01;
+  for (in = 0; in <= 255; in++)
+    {
+      buf[in + 4] = (unsigned char) in;
+    }
+}
+
+static void
+cp2155_set_linear_gamma (int fd)
+{
+  unsigned char buf[260];
+
+  DBG (1, "cp2155_set_linear_gamma\n");
+  make_linear_gamma_table (buf);
+  cp2155_write_gamma_block (fd, 0x000, buf);
+  cp2155_write_gamma_block (fd, 0x100, buf);
+  cp2155_write_gamma_block (fd, 0x200, buf);
+}
+
 static void
 cp2155_set_gamma (int fd, CANON_Handle * chndl)
 {
   DBG (1, "cp2155_set_gamma\n");
   unsigned char buf[260];
+  if (chndl->linear)
+    {
+      cp2155_set_linear_gamma (fd);
+      return;
+    }
 /* gamma tables */
   makegammatable (chndl->table_gamma, chndl->highlight_other, buf);
   cp2155_write_gamma_block (fd, 0x000, buf);
@@ -281,6 +331,11 @@ cp2155_set_gamma_red_enhanced (int fd, CANON_Handle * chndl)
 {
   DBG (1, "cp2155_set_gamma\n");
   unsigned char buf[260];
+  if (chndl->linear)
+    {
+      cp2155_set_linear_gamma (fd);
+      return;
+    }
 /* gamma tables */
   makegammatable (chndl->table_gamma, chndl->highlight_red_enhanced, buf);
   cp2155_write_gamma_block (fd, 0x000, buf);
@@ -2376,9 +2431,12 @@ init_2225 (CANON_Handle * chndl)
   cp2155_set (fd, 0x87, 0x00);
   cp2155_set (fd, 0x88, 0x70);
 
+  /* Registers 0x85 (address), 0x87 (data bit 8) and 0x88 (data bits 7-0)
+     write to the HT82V36 analog front end. Its register 3 is the PGA gain
+     code; calibrated scans use a lower gain (see make_shading). */
   cp2155_set (fd, 0x85, 0x03);
   cp2155_set (fd, 0x87, 0x00);
-  cp2155_set (fd, 0x88, 0x28);
+  cp2155_set (fd, 0x88, chndl->afe_gain ? chndl->afe_gain : 0x28);
 
   cp2155_set (fd, 0x85, 0x06);
   cp2155_set (fd, 0x87, 0x00);
@@ -2695,6 +2753,344 @@ back2224 (int fd, unsigned char *buf)
 
 }
 
+/* Shading calibration (LiDE 70).
+
+   Each column of the contact image sensor has its own sensitivity and the
+   three colors differ: uncorrected, a white page shows vertical bands of
+   about 5% (up to 12%) and a red or pink tint. The scanner has a white strip
+   just before the glass, from about 5.5 to 2 mm before the top of the scan
+   area at 300 dpi and up, inside the 7 mm top_edge of
+   CANON_set_scan_parameters. Before a calibrated scan, a short linear scan of
+   the strip (strip_band) gives, per sensor column and color, how bright
+   white reads. The strip is a little brighter than white on the glass, so
+   the reading is scaled by fixed glass/strip factors per color, measured once
+   against a white surface on the glass. The scan itself is made with
+   identity gamma tables; each column is scaled so that white becomes 255,
+   and the gamma is applied afterwards (apply_shading).
+
+   The analog front end's gain (HT82V36 PGA, register 3; gain = 5.85 / (1 +
+   4.85 * (63 - code) / 63)) is lowered from 0x28 (about 2.11x) for the strip
+   and the scan, as white paper and the strip saturate in many red and blue
+   columns at 0x28. The scanner's response has been seen to change by a few
+   percent between sessions, so the strip is read again for a scan unless
+   the last reading at the same resolution is recent. */
+
+#define STRIP_READING_LIFETIME 600	/* seconds a strip reading is reused */
+#define STRIP_MIN_WHITE 48.0	/* darkest white trusted (edges of the bed) */
+#define STRIP_MAX_SATURATED 0.15	/* largest fraction of saturated readings */
+#define STRIP_LEVEL_MIN 0.6	/* plausible strip level, relative to the */
+#define STRIP_LEVEL_MAX 1.4	/* level measured with the factors */
+#define SHADING_GAMMA 2.2
+
+typedef struct
+{
+  int dpi;			/* scan resolution */
+  int afe_gain;			/* gain code for the strip reading and the scan */
+  float factor[3];		/* white on the glass / strip; red, green, blue */
+  float level[3];		/* mean strip reading when the factors were measured */
+}
+Strip_Calibration;
+
+/* Measured on one LiDE 70, with its white lid closed on the clear glass. The
+   600 dpi setup reads red weakly and blue strongly, hence its lower gain. */
+static const Strip_Calibration strip_calibrations[] = {
+  {75, 32, {0.8876, 0.9076, 0.9101}, {206.3, 179.8, 201.1}},
+  {150, 32, {0.8834, 0.9020, 0.9039}, {206.3, 179.8, 201.1}},
+  {300, 32, {0.8860, 0.9054, 0.9080}, {206.3, 179.8, 201.1}},
+  {600, 26, {0.9073, 0.9247, 0.9278}, {126.6, 167.3, 207.5}},
+  {1200, 32, {0.8762, 0.8954, 0.8965}, {201.5, 188.6, 212.4}},
+};
+
+/* The calibration for a scan at dpi, or NULL if there is none. */
+static const Strip_Calibration *
+strip_calibration_for (CANON_Handle * chndl, int dpi)
+{
+  size_t i;
+
+  if (chndl->productcode != 0x2225)
+    {
+      return NULL;
+    }
+  for (i = 0; i < sizeof (strip_calibrations) / sizeof (strip_calibrations[0]);
+       i++)
+    {
+      if (strip_calibrations[i].dpi == dpi)
+	{
+	  return &strip_calibrations[i];
+	}
+    }
+  return NULL;
+}
+
+/* Resolution of the strip reading for a scan at dpi: below 300 dpi the scan
+   area starts on the glass, so the strip is read at 300 dpi. */
+static int
+strip_dpi_for (int dpi)
+{
+  return dpi < 300 ? 300 : dpi;
+}
+
+/* The band of the strip that is read, in mm from the top of the scan area.
+   The slider moves slowly at 1200 dpi, so that band is narrower. The factors
+   above were measured with these bands. */
+static void
+strip_band (int strip_dpi, double *top, double *bottom)
+{
+  if (strip_dpi >= 1200)
+    {
+      *top = -4.5;
+      *bottom = -3.3;
+    }
+  else
+    {
+      *top = -5.0;
+      *bottom = -2.5;
+    }
+}
+
+static int
+compare_bytes (const void *a, const void *b)
+{
+  return *(const unsigned char *) a - *(const unsigned char *) b;
+}
+
+/* Keeps the per-column medians of a strip scan (rows of interleaved RGB, 3
+   bytes per column) as chndl->strip, so that dust does not count. */
+static SANE_Status
+store_strip_reading (CANON_Handle * chndl, const unsigned char *data,
+		     int columns, int rows, int strip_dpi, int afe_gain)
+{
+  float *strip;
+  unsigned char *samples;
+  int x, c, r;
+
+  strip = malloc (3 * columns * sizeof (float));
+  samples = malloc (rows);
+  if (!strip || !samples)
+    {
+      free (strip);
+      free (samples);
+      return SANE_STATUS_NO_MEM;
+    }
+
+  for (c = 0; c < 3; c++)
+    {
+      for (x = 0; x < columns; x++)
+	{
+	  for (r = 0; r < rows; r++)
+	    {
+	      samples[r] = data[(long) r * 3 * columns + 3 * x + c];
+	    }
+	  qsort (samples, rows, 1, compare_bytes);
+	  strip[c * columns + x] = samples[rows / 2];
+	}
+    }
+  free (samples);
+
+  free (chndl->strip);
+  chndl->strip = strip;
+  chndl->strip_columns = columns;
+  chndl->strip_dpi = strip_dpi;
+  chndl->strip_gain = afe_gain;
+  chndl->strip_time = time (NULL);
+  return SANE_STATUS_GOOD;
+}
+
+/* A stored strip reading that can be used for a scan at dpi. */
+static SANE_Bool
+strip_reading_is_current (CANON_Handle * chndl,
+			  const Strip_Calibration * cal, int dpi)
+{
+  return chndl->strip && chndl->strip_dpi == strip_dpi_for (dpi)
+    && chndl->strip_gain == cal->afe_gain
+    && time (NULL) - chndl->strip_time < STRIP_READING_LIFETIME;
+}
+
+/* Saturated readings (255) only say "at least this bright": interpolate
+   between the nearest unsaturated readings on either side. */
+static void
+fill_saturated (float *v, int n)
+{
+  int x = 0, end, i;
+  float left, right;
+
+  while (x < n)
+    {
+      if (v[x] < 255)
+	{
+	  x++;
+	  continue;
+	}
+      end = x;
+      while (end < n && v[end] >= 255)
+	{
+	  end++;
+	}
+      left = x > 0 ? v[x - 1] : -1;
+      right = end < n ? v[end] : -1;
+      for (i = x; i < end; i++)
+	{
+	  if (left >= 0 && right >= 0)
+	    {
+	      v[i] = left + (right - left) * (i - x + 1) / (end - x + 1);
+	    }
+	  else if (left >= 0)
+	    {
+	      v[i] = left;
+	    }
+	  else if (right >= 0)
+	    {
+	      v[i] = right;
+	    }
+	}
+      x = end;
+    }
+}
+
+/* Builds the shading correction for the scan set up in chndl (resolution,
+   x1, width) from the stored strip reading. Fails, with the reason in the
+   debug output, if the reading does not look like the strip; the scan is
+   then made uncalibrated. */
+static SANE_Status
+make_shading (CANON_Handle * chndl, const Strip_Calibration * cal)
+{
+  int dpi = chndl->val[opt_resolution].w;
+  int n = chndl->strip_columns;
+  int step = chndl->strip_dpi / dpi;
+  int columns, first, width, x, c, i, saturated, filled = 0;
+  float *v, level[3];
+  double sum;
+  unsigned short *shading;
+
+  if (step < 1)
+    {
+      step = 1;
+    }
+  if (!chndl->strip || n <= 10)
+    {
+      DBG (1, "make_shading: no strip reading\n");
+      return SANE_STATUS_INVAL;
+    }
+  v = malloc (3 * n * sizeof (float));
+  width = chndl->params.pixels_per_line;	/* chndl->width once scanning */
+  shading = malloc (3 * width * sizeof (unsigned short));
+  if (!v || !shading)
+    {
+      free (v);
+      free (shading);
+      return SANE_STATUS_NO_MEM;
+    }
+  memcpy (v, chndl->strip, 3 * n * sizeof (float));
+
+  for (c = 0; c < 3; c++)
+    {
+      float *col = v + c * n;
+      saturated = 0;
+      for (x = 0; x < n; x++)
+	{
+	  if (col[x] >= 255)
+	    {
+	      saturated++;
+	    }
+	}
+      if (saturated > STRIP_MAX_SATURATED * n)
+	{
+	  DBG (1, "make_shading: %d of %d strip readings saturated\n",
+	       saturated, n);
+	  free (v);
+	  free (shading);
+	  return SANE_STATUS_INVAL;
+	}
+      filled += saturated;
+      fill_saturated (col, n);
+
+      sum = 0;
+      for (x = n / 50; x < n - n / 50; x++)
+	{
+	  sum += col[x];
+	}
+      level[c] = sum / (n - 2 * (n / 50)) / cal->level[c];
+      if (level[c] < STRIP_LEVEL_MIN || level[c] > STRIP_LEVEL_MAX)
+	{
+	  DBG (1, "make_shading: strip level %.2f (color %d) is implausible\n",
+	       level[c], c);
+	  free (v);
+	  free (shading);
+	  return SANE_STATUS_INVAL;
+	}
+    }
+  DBG (1, "make_shading: strip level %.3f/%.3f/%.3f of the calibrated "
+       "scanner's, %d saturated readings filled in\n",
+       level[0], level[1], level[2], filled);
+
+  /* Column x of the scan is sensor column first + x at the scan resolution;
+     a column at a lower resolution than the strip's averages step columns
+     of the strip. */
+  columns = (n + step - 1) / step;
+  first = (chndl->x1 * dpi + 300) / 600;
+  for (x = 0; x < width; x++)
+    {
+      int column = first + x;
+      int start, end;
+
+      if (column > columns - 1)
+	{
+	  column = columns - 1;
+	}
+      start = column * step;
+      end = start + step < n ? start + step : n;
+      for (c = 0; c < 3; c++)
+	{
+	  double white = 0;
+	  for (i = start; i < end; i++)
+	    {
+	      white += v[c * n + i];
+	    }
+	  white = white / (end - start) * cal->factor[c];
+	  if (white < STRIP_MIN_WHITE)
+	    {
+	      white = STRIP_MIN_WHITE;
+	    }
+	  shading[3 * x + c] = (unsigned short) (255.0 / white * 256 + 0.5);
+	}
+    }
+  free (v);
+
+  for (i = 0; i < 256; i++)
+    {
+      chndl->shading_gamma[i] =
+	(unsigned char) (255 * pow (i / 255.0, 1 / SHADING_GAMMA) + 0.5);
+    }
+  free (chndl->shading);
+  chndl->shading = shading;
+  return SANE_STATUS_GOOD;
+}
+
+/* Corrects one line of interleaved RGB from a linear scan in place. */
+static void
+apply_shading (CANON_Handle * chndl, unsigned char *line)
+{
+  long i, n = 3 * chndl->width;
+  unsigned int v;
+
+  for (i = 0; i < n; i++)
+    {
+      v = (line[i] * (unsigned int) chndl->shading[i]) >> 8;
+      line[i] = chndl->shading_gamma[v > 255 ? 255 : v];
+    }
+}
+
+/* Drops the shading correction: the next scan is uncalibrated unless it
+   builds a new one. */
+static void
+clear_shading (CANON_Handle * chndl)
+{
+  free (chndl->shading);
+  chndl->shading = NULL;
+  chndl->linear = SANE_FALSE;
+  chndl->afe_gain = 0;
+}
+
 static void
 go_home_without_wait (CANON_Handle * chndl)
 {
@@ -2886,6 +3282,10 @@ preread (CANON_Handle * chndl, SANE_Byte * data, FILE * fp)
 	      /* use scanner->width instead of width to remove pad bytes */
 	      if (line > (chndl->y1) * chndl->val[opt_resolution].w / 600)
 		{
+		  if (chndl->shading)
+		    {
+		      apply_shading (chndl, linebuf);
+		    }
 		  if (chndl->params.format == SANE_FRAME_RGB)
 		    {
 		      memcpy (data + offset, linebuf, 3 * chndl->width);

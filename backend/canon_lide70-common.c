@@ -29,6 +29,7 @@
 #include <unistd.h>		/* usleep */
 #include <time.h>
 #include <math.h>		/* pow() */
+#include <signal.h>		/* sig_atomic_t */
 #ifdef HAVE_OS2_H
 #include <sys/types.h>		/* mode_t */
 #endif
@@ -2718,12 +2719,16 @@ go_home_without_wait (CANON_Handle * chndl)
 }
 
 
+/* Set by sane_cancel(), which may be called from a signal handler or from
+   another thread while sane_start() is scanning; cleared by sane_start(). */
+static volatile sig_atomic_t cancel_requested = 0;
+
 /* Longest wait for the slider to reach its home position. A return from the
    far end of the bed takes a few seconds. */
 #define GO_HOME_TIMEOUT 30	/* seconds */
 
-/* Returns 0 when the slider is home, -1 if the scanner does not answer or
-   the slider does not get home in time. */
+/* Returns 0 when the slider is home, -1 if the scanner does not answer, the
+   slider does not get home in time, or the scan is cancelled. */
 static int
 go_home (CANON_Handle * chndl)
 {
@@ -2756,6 +2761,12 @@ go_home (CANON_Handle * chndl)
       if (value == 0x08)
 	{
 	  break;
+	}
+
+      if (cancel_requested)
+	{
+	  DBG (1, "go_home: cancelled\n");
+	  return -1;
 	}
 
       if (time (NULL) - start_time > GO_HOME_TIMEOUT)
@@ -2799,6 +2810,16 @@ preread (CANON_Handle * chndl, SANE_Byte * data, FILE * fp)
      width bytes Blue, repeat for "height" lines. */
 /*  while (line < height)  process one buffer from the scanner */
   long startline = line;
+
+  /* stop between two buffers from the scanner; do_scan then sends the
+     slider home */
+  if (cancel_requested)
+    {
+      DBG (1, "scan cancelled at line %ld\n", line);
+      init (chndl);
+      status = SANE_STATUS_CANCELLED;
+      goto stop;
+    }
 
   if (line >= (chndl->y1) * chndl->val[opt_resolution].w / 600
       + chndl->params.lines)
@@ -3306,8 +3327,12 @@ CANON_start_scan (CANON_Handle * chndl)
 
   if (go_home (chndl) < 0)
     {
-      DBG (1, "Can't move the slider home.\n");
       CANON_finish_scan (chndl);
+      if (cancel_requested)
+	{
+	  return SANE_STATUS_CANCELLED;
+	}
+      DBG (1, "Can't move the slider home.\n");
       return SANE_STATUS_IO_ERROR;
     }
 
@@ -3341,6 +3366,15 @@ CANON_read (CANON_Handle * chndl, SANE_Byte * data,
   int read_len;
 
   DBG (5, "CANON_read called\n");
+
+  /* cancelled while the frontend reads the scanned image */
+  if (cancel_requested && chndl->fp)
+    {
+      DBG (4, "CANON_read: cancelled\n");
+      *length = 0;
+      CANON_finish_scan (chndl);
+      return SANE_STATUS_CANCELLED;
+    }
 
   if (!chndl->fp)
     {

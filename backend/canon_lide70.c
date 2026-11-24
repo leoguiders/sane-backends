@@ -917,6 +917,9 @@ sane_start (SANE_Handle handle)
 
   DBG (3, "sane_start\n");
 
+  /* a cancel from before this scan */
+  cancel_requested = 0;
+
   res = sane_get_parameters (handle, &chndl->params);
   res = CANON_set_scan_parameters (&scanner->scan);
 
@@ -939,8 +942,13 @@ sane_read (SANE_Handle handle, SANE_Byte * data,
 void
 sane_cancel (SANE_Handle handle)
 {
-  DBG (3, "sane_cancel: handle = %p\n", handle);
-  DBG (3, "sane_cancel: cancelling is unsupported in this backend\n");
+  /* Only sets a flag: this may be called from a signal handler or another
+     thread. A scan in progress in sane_start() stops at the next buffer from
+     the scanner and sends the slider home; sane_start() then returns
+     SANE_STATUS_CANCELLED. Afterwards, sane_read() returns
+     SANE_STATUS_CANCELLED and removes the temp file. */
+  (void) handle;
+  cancel_requested = 1;
 }
 
 

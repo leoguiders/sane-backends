@@ -1,0 +1,1 @@
+canon_lide70: Support cancelling a scan: sane_cancel() now stops a scan in progress and sends the slider home, so interrupting scanimage (Ctrl-C) or pressing Cancel in a frontend no longer has to wait for the whole page.

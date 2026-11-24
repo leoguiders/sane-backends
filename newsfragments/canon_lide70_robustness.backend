@@ -1,0 +1,1 @@
+canon_lide70: Report an I/O error instead of a truncated image when the scanner stops responding during a scan, stop waiting for the slider to return home after 30 seconds instead of hanging, and remove the temporary scan file on errors and when a scan is not read to the end.

@@ -44,7 +44,7 @@
 /* Assign status and verify a good return code */
 #define CHK(A) {if ((status = A) != SANE_STATUS_GOOD) {\
                 DBG (1, "Failure on line of %s: %d\n", \
-                     __FILE__, __LINE__ ); return A; }}
+                     __FILE__, __LINE__ ); return status; }}
 
 typedef SANE_Byte byte;
 
@@ -2718,12 +2718,23 @@ go_home_without_wait (CANON_Handle * chndl)
 }
 
 
+/* Longest wait for the slider to reach its home position. A return from the
+   far end of the bed takes a few seconds. */
+#define GO_HOME_TIMEOUT 30	/* seconds */
+
+/* Returns 0 when the slider is home, -1 if the scanner does not answer or
+   the slider does not get home in time. */
 static int
 go_home (CANON_Handle * chndl)
 {
   int fd = chndl->fd;
   byte value;
-  cp2155_get (fd, 0x46, &value);
+  time_t start_time;
+
+  if (cp2155_get (fd, 0x46, &value) != SANE_STATUS_GOOD)
+    {
+      return -1;
+    }
   DBG (1, "state sensor: %02x\n", value);
   if (value == 0x08)
     {
@@ -2731,16 +2742,27 @@ go_home (CANON_Handle * chndl)
     }
 
   go_home_without_wait (chndl);
+  start_time = time (NULL);
 
   while (1)
     {
       usleep (200 * MSEC);
-      cp2155_get (fd, 0x46, &value);
+      if (cp2155_get (fd, 0x46, &value) != SANE_STATUS_GOOD)
+	{
+	  return -1;
+	}
       DBG (1, "state sensor: %02x\n", value);
 
       if (value == 0x08)
 	{
 	  break;
+	}
+
+      if (time (NULL) - start_time > GO_HOME_TIMEOUT)
+	{
+	  DBG (1, "go_home: not home after %d seconds (state sensor: %02x)\n",
+	       GO_HOME_TIMEOUT, value);
+	  return -1;
 	}
     }
   return 0;
@@ -2790,11 +2812,13 @@ preread (CANON_Handle * chndl, SANE_Byte * data, FILE * fp)
     }
   datasize = wait_for_data (chndl);
 
+  /* The end of the image is detected above, so no data here means that the
+     scanner stopped answering (or was disconnected) partway through. */
   if (datasize < 0)
     {
-      DBG (1, "no data\n");
-      status = SANE_STATUS_EOF;
-      return status;
+      DBG (1, "no data at line %ld\n", line);
+      status = SANE_STATUS_IO_ERROR;
+      goto stop;
     }
 
   if (datasize > 0xf000)
@@ -2811,8 +2835,9 @@ preread (CANON_Handle * chndl, SANE_Byte * data, FILE * fp)
 
   if (status != SANE_STATUS_GOOD)
     {
-      status = SANE_STATUS_INVAL;
-      return status;
+      DBG (1, "read error at line %ld\n", line);
+      status = SANE_STATUS_IO_ERROR;
+      goto stop;
     }
 
   /* Contorsions to convert data from line-by-line RGB to byte-by-byte RGB,
@@ -2895,8 +2920,18 @@ preread (CANON_Handle * chndl, SANE_Byte * data, FILE * fp)
       status = SANE_STATUS_IO_ERROR;
     }
   DBG (6, "%ld lines from readbuf\n", line - startline);
-  return status;		/*  to escape from this loop
+  if (status == SANE_STATUS_GOOD)
+    {
+      return status;		/*  to escape from this loop
 				   after processing only one data buffer */
+    }
+
+stop:
+  /* the scan ends here: start the next one from the first line */
+  line = 0;
+  slot = 0;
+  dstptr = linebuf;
+  return status;
 }
 
 /* Scan and save the resulting image as r,g,b non-interleaved PPM file */
@@ -3245,6 +3280,9 @@ CANON_start_scan (CANON_Handle * chndl)
   int fd;
   DBG (3, "CANON_start_scan called\n");
 
+  /* a previous scan that was not read to the end still has its temp file */
+  CANON_finish_scan (chndl);
+
   /* choose a temp file name for scan data */
   chndl->fname = strdup ("/tmp/scan.XXXXXX");
   fd = mkstemp (chndl->fname);
@@ -3262,10 +3300,16 @@ CANON_start_scan (CANON_Handle * chndl)
   if (result < 0)
     {
       DBG (1, "Can't talk on USB.\n");
+      CANON_finish_scan (chndl);
       return SANE_STATUS_IO_ERROR;
     }
 
-  go_home (chndl);
+  if (go_home (chndl) < 0)
+    {
+      DBG (1, "Can't move the slider home.\n");
+      CANON_finish_scan (chndl);
+      return SANE_STATUS_IO_ERROR;
+    }
 
   /* scan */
   if ((status = scan (chndl)) != SANE_STATUS_GOOD)
@@ -3281,6 +3325,7 @@ CANON_start_scan (CANON_Handle * chndl)
   if (!chndl->fp)
     {
       DBG (1, "open %s", chndl->fname);
+      CANON_finish_scan (chndl);
       return SANE_STATUS_IO_ERROR;
     }
 

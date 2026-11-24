@@ -13,8 +13,7 @@ Due to Canon's unwillingness to provide scanner documentation, this
 software was developed by analyzing the USB traffic of the Windows
 XP driver. The precise meaning of the individual commands that are sent
 to the scanner is known only to a very limited extent. Some sophistication
-present in the Windows XP driver has been left out. There is, for example,
-no active calibration.
+present in the Windows XP driver has been left out.
 .PP
 Testers and reviewers are welcome. Send your bug reports and comments to
 the sane\-devel mailing list
@@ -41,6 +40,14 @@ Selects the scan mode. Lineart means fully black and fully white pixels only.
 .TP
 .B \-\-threshold 0..100 (in steps of 1) [default 75]
 Select minimum-brightness percentage to get a white point, relevant only for Lineart
+
+.TP
+.B \-\-quality\-cal[=(yes|no)] [default: yes]
+Corrects uneven brightness and color across the scan (vertical stripes and a
+tint on white pages) with a white reference read from the scanner's internal
+white strip, just before the glass. Reading the strip adds about 2 to 3
+seconds to a scan (about 10 seconds at 1200 dpi); a reading at the same
+resolution is reused for 10 minutes. Only available on the LiDE 70.
 
 .TP
 .B \-\-non-blocking[=(yes|no)] [inactive]
@@ -91,10 +98,15 @@ where such precision matters. Note that
 uses the 75 dpi mode for prescans. The problem is worse on the LiDE 600(F),
 where the offset is five millimeters.
 .PP
-Colors may be represented inaccurately: in particular, white document pages
-can have a tint of red, green, or blue. This problem is usually confined to
-scans made at a particular resolution (especially 600 dpi); try scanning
-at a different resolution if this is bothersome.
+On the LiDE 600(F), and on the LiDE 70 with
+.B \-\-quality\-cal=no,
+colors may be represented inaccurately: in particular, white document pages
+can have a tint of red, green, or blue, and vertical stripes. This problem is
+usually confined to scans made at a particular resolution (especially 600
+dpi); try scanning at a different resolution if this is bothersome.
+.PP
+The calibration's glass/strip factors were measured on a single LiDE 70.
+Reports from other units are welcome.
 
 .SH "SEE ALSO"
 .BR sane (7),

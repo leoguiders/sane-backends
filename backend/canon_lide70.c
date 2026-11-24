@@ -648,6 +648,8 @@ sane_close (SANE_Handle handle)
   else
     first_handle = scanner->next;
 
+  /* remove the temp file of a scan that was not read to the end */
+  CANON_finish_scan (&scanner->scan);
   res = CANON_close_device (&scanner->scan);
   DBG (3, "CANON_close_device returned: %d\n", res);
   free (scanner);

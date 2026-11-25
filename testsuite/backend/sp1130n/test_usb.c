@@ -204,7 +204,7 @@ opening (void)
     {
       reset ();
       open_status = failures[i];
-      assert (sanei_sp1130n_usb_open ("usb:001:002", &usb) == (int) failures[i]);
+      assert (sanei_sp1130n_usb_open ("usb:001:002", &usb) == failures[i]);
       assert (!usb && !references && !opened && !closed);
     }
   reset ();
@@ -267,7 +267,7 @@ bulk_transfers (void)
         transfer_size = sizeof data + 1;
       else
         transfer_status = SANE_STATUS_ACCESS_DENIED;
-      int expected = scenario == 4 ? SANE_STATUS_ACCESS_DENIED : SANE_STATUS_IO_ERROR;
+      SANE_Status expected = scenario == 4 ? SANE_STATUS_ACCESS_DENIED : SANE_STATUS_IO_ERROR;
       assert (io.bulk (io.context, scenario != 4, data, sizeof data,
                       &actual, 123) == expected);
       assert (!actual && transfers == 1);

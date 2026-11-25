@@ -819,7 +819,7 @@ pixma_open (unsigned devnr, pixma_t ** handle)
   first_pixma = s;
 
   s->cfg = cfg;
-  s->rec_tmo = 8;               /* set receive timeout to 8 seconds */
+  s->rec_tmo = 15;               /* set receive timeout to 15 seconds */
   error = pixma_connect (devnr, &s->io);
   if (error < 0)
     {

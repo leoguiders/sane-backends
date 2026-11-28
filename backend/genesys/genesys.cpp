@@ -3208,7 +3208,7 @@ static void compute_shifted_coefficients(Genesys_Device * dev,
     for (i = 0; i < avgpixels; i++) {
       for (j = 0; j < channels; j++) {
                 br_tmp[j] += dev->white_average_data[((x + i) * channels + j)];
-                dk_tmp[i] += dev->dark_average_data[((x + i) * channels + j)];
+                dk_tmp[j] += dev->dark_average_data[((x + i) * channels + j)];
       }
     }
     for (j = 0; j < channels; j++) {
